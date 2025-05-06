@@ -685,3 +685,15 @@ class DatabaseHandler:
             logger.info("Database connection closed")
         except Exception as e:
             logger.error(f"Exception in close: {e}")
+
+    def get_total_students(self):
+        """Trả về tổng số sinh viên đã đăng ký (có embedding)."""
+        try:
+            query = QSqlQuery(self.db)
+            if query.exec_("SELECT COUNT(*) FROM users WHERE embedding IS NOT NULL"):
+                if query.next():
+                    return int(query.value(0))
+            return 0
+        except Exception as e:
+            logger.error(f"Exception in get_total_students: {e}")
+            return 0

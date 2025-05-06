@@ -70,15 +70,39 @@ class AttendanceSystem:
         # Create a copy of the image for drawing
         result_img = img.copy()
         
-        # Process recognized faces
+        # Lấy các ngưỡng từ config
         recog_threshold = 1 - self.config["recognition_distance"]
+        min_confidence = self.config.get("min_confidence_threshold", 0.6)
+        abs_threshold = self.config.get("absolute_distance_threshold", 0.6)
+        
+        # Process recognized faces with stricter criteria
         for face in recognized_faces:
-            # Record attendance if confidence above threshold
-            if face["student_id"] and face["confidence"] > recog_threshold:
+            # Nếu face có distance và vượt quá ngưỡng tuyệt đối
+            if "distance" in face and face["distance"] > abs_threshold:
+                # Đánh dấu là "Unknown"
+                face["student_id"] = None
+                face["name"] = "Unknown"
+                face["confidence"] = 0
+                face["attendance_recorded"] = False
+                continue
+            
+            # Kiểm tra student_id, confidence và ngưỡng tối thiểu
+            confidence = face.get("confidence", 0)
+            if (face.get("student_id") and 
+                confidence > recog_threshold and 
+                confidence >= min_confidence):
+                
+                # Chỉ ghi nhận điểm danh khi thỏa mãn tất cả điều kiện
                 face["attendance_recorded"] = self.record_attendance(
-                    face["student_id"], face["name"], face["confidence"]
+                    face["student_id"], face["name"], confidence
                 )
             else:
+                # Nếu confidence thấp, ghi đè thành Unknown
+                if confidence < min_confidence and face.get("name") != "Unknown":
+                    face["name"] = "Unknown" 
+                    face["student_id"] = None
+                    face["confidence"] = 0
+                    
                 face["attendance_recorded"] = False
         
         # Draw results on image
@@ -190,20 +214,32 @@ class AttendanceSystem:
                 
             x1, y1, x2, y2 = face["bbox"]
             name = face["name"]
-            confidence = face["confidence"]
+            confidence = face.get("confidence", 0)
+            distance = face.get("distance", 0)  # Thêm hiển thị khoảng cách nếu có
             attendance_status = face.get("attendance_recorded", False)
             
-            # Draw bounding box
-            color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+            # Chọn màu dựa trên độ tin cậy và trạng thái
+            if name == "Unknown":
+                color = (0, 0, 255)  # Đỏ cho unknown
+            elif confidence > 0.9:
+                color = (0, 255, 0)  # Xanh lá cho độ tin cậy cao
+            elif confidence > 0.7:
+                color = (0, 255, 255)  # Vàng cho độ tin cậy trung bình
+            else:
+                color = (0, 165, 255)  # Cam cho độ tin cậy thấp
+                
             # Different color if attendance was recorded
             if attendance_status:
-                color = (255, 0, 0)  # Red when attendance recorded
+                color = (255, 0, 0)  # Đỏ khi điểm danh được ghi nhận
                 
             cv2.rectangle(result_img, (x1, y1), (x2, y2), color, 2)
             
-            # Display name and status
+            # Display name, confidence and distance
             status = "✓" if attendance_status else ""
-            label = f"{name} ({confidence:.2f}) {status}"
+            label = f"{name} ({confidence:.2f})"
+            if distance > 0:
+                label += f" [D:{distance:.2f}]"  # Hiển thị khoảng cách nếu có
+            label += f" {status}"
             
             # Ensure text is displayed within frame
             text_y = y1 - 10 if y1 > 20 else y1 + 20

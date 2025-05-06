@@ -19,7 +19,9 @@ class FaceEmbeddingConfig:
         max_dim: int = 800,
         face_size: Tuple[int, int] = (160, 160),
         cache_size: int = 1000,
-        max_workers: int = 4
+        max_workers: int = 4,
+        min_confidence_threshold: float = 0.6,
+        absolute_distance_threshold: float = 0.6
     ):
         self.model_dir = model_dir
         self.min_confidence = min_confidence
@@ -28,6 +30,12 @@ class FaceEmbeddingConfig:
         self.face_size = face_size
         self.cache_size = cache_size
         self.max_workers = max_workers
+        self.min_confidence_threshold = min_confidence_threshold
+        self.absolute_distance_threshold = absolute_distance_threshold
+
+    def get(self, key: str, default=None):
+        """Get configuration value with default fallback"""
+        return getattr(self, key, default)
 
 def dict_to_face_embedding_config(cfg: dict) -> FaceEmbeddingConfig:
     return FaceEmbeddingConfig(
@@ -38,6 +46,8 @@ def dict_to_face_embedding_config(cfg: dict) -> FaceEmbeddingConfig:
         face_size=cfg.get("face_size", (160, 160)),
         cache_size=cfg.get("cache_size", 1000),
         max_workers=cfg.get("max_workers", 4),
+        min_confidence_threshold=cfg.get("min_confidence_threshold", 0.6),
+        absolute_distance_threshold=cfg.get("absolute_distance_threshold", 0.6)
     )
 
 class LimitedSizeDict(OrderedDict):
@@ -109,6 +119,26 @@ class FaceEmbedding:
 
     def l2_normalize(self, x, axis=-1, epsilon=1e-10):
         return x / np.sqrt(np.maximum(np.sum(np.square(x), axis=axis, keepdims=True), epsilon))
+
+    def cosine(self, a, b):
+        """Calculate cosine distance between two vectors."""
+        if not isinstance(a, np.ndarray) or not isinstance(b, np.ndarray):
+            return 1.0  # Maximum distance for invalid inputs
+        if a.ndim != 1 or b.ndim != 1 or a.shape != b.shape:
+            return 1.0  # Maximum distance for incompatible shapes
+        # Ensure both vectors are L2 normalized
+        a_norm = np.linalg.norm(a)
+        b_norm = np.linalg.norm(b)
+        if a_norm < 0.99 or a_norm > 1.01:
+            a = a / (a_norm + 1e-10)
+        if b_norm < 0.99 or b_norm > 1.01:
+            b = b / (b_norm + 1e-10)
+        # Calculate dot product
+        dot_product = np.dot(a, b)
+        # Clip to [-1, 1] to handle numerical issues
+        dot_product = np.clip(dot_product, -1.0, 1.0)
+        # Cosine distance = 1 - cosine similarity
+        return 1.0 - dot_product
 
     def get_face_embedding(self, face_img: np.ndarray, debug_label=None) -> Optional[np.ndarray]:
         # Ghi log embedding vector ra file nếu có label đặc biệt
@@ -210,65 +240,100 @@ class FaceEmbedding:
             return results
 
     def recognize_face(self, face_img: np.ndarray) -> Tuple[str, float, Optional[str]]:
+        """
+        Nhận diện khuôn mặt từ hình ảnh, trả về tên, độ tin cậy và ID.
+        Đã cải thiện để ngăn chặn nhận diện sai với ngưỡng tin cậy thấp.
+        """
         logger.info(f"[Nhận diện] Số lượng embedding trong DB: {len(self.student_embeddings)}")
         logger.info(f"[Nhận diện] Ngưỡng sử dụng (distance_threshold): {self.config.distance_threshold}")
+        
         if face_img is None or face_img.size == 0:
             return "Unknown", 0.0, None
+        
         # Gán nhãn debug cho embedding nhận diện
         current = self.get_face_embedding(face_img, debug_label="recognize_input")
         if current is None:
             return "Unknown", 0.0, None
+        
+        # Đảm bảo embedding được chuẩn hóa L2
         norm = np.linalg.norm(current)
-        # Ensure recognized embedding is L2-normalized float32
         if not (current.dtype == np.float32 and abs(norm - 1.0) < 1e-3):
             current = (current / (norm + 1e-10)).astype(np.float32)
-        logger.debug(f"[Recognize Input] shape={current.shape}, dtype={current.dtype}, norm={norm:.4f}, nan={np.isnan(current).any()}, inf={np.isinf(current).any()}")
-        logger.debug(f"[Recognize Input] first 10 values: {current[:10]}")
-        logger.debug(f"[Threshold] Recognition threshold = {self.config.distance_threshold}")
-        # Nếu đã có emb_matrix và emb_ids, dùng numpy để nhận diện nhanh
+        
+        # Kiểm tra thông tin embedding
+        logger.debug(f"[Recognize Input] shape={current.shape}, dtype={current.dtype}, norm={norm:.4f}")
+        
+        # Lấy tham số từ config
+        distance_threshold = self.config.distance_threshold
+        min_confidence_threshold = self.config.get("min_confidence_threshold", 0.6)
+        absolute_distance_threshold = self.config.get("absolute_distance_threshold", 0.6)
+        
+        logger.debug(f"[Threshold] Recognition threshold = {distance_threshold}")
+        logger.debug(f"[Threshold] Min confidence threshold = {min_confidence_threshold}")
+        logger.debug(f"[Threshold] Absolute distance threshold = {absolute_distance_threshold}")
+        
         best_name = "Unknown"
-        best_id: Optional[str] = None
+        best_id = None
         min_dist = float("inf")
+        
+        # Phương pháp 1: Nhận diện nhanh sử dụng ma trận embedding
         if hasattr(self, "emb_matrix") and self.emb_matrix is not None and len(self.emb_ids) > 0:
-            # Debug emb_matrix và current embedding
-            logger.debug(f"emb_matrix shape: {self.emb_matrix.shape}, dtype: {self.emb_matrix.dtype}")
-            logger.debug(f"current shape: {current.shape}, dtype: {current.dtype}")
-            logger.debug(f"emb_matrix norm (first 5): {[np.linalg.norm(e) for e in self.emb_matrix[:5]]}")
-            logger.debug(f"current norm: {np.linalg.norm(current)}")
             # Tính cosine distance hàng loạt
-            # Cosine distance = 1 - cosine similarity
             sims = np.dot(self.emb_matrix, current)
-            # Đảm bảo current đã l2-normalize, self.emb_matrix cũng đã l2-normalize
             dists = 1 - sims  # cosine distance
             min_idx = np.argmin(dists)
             min_dist = float(dists[min_idx])
-            if min_dist < self.config.distance_threshold:
-                sid = self.emb_ids[min_idx]
-                data = self.student_embeddings.get(sid, {})
-                best_name = data.get("name", "Unknown")
-                best_id = sid
+            
+            # Kiểm tra và log thông tin khoảng cách nhỏ nhất
+            logger.debug(f"[Nearest] Min distance: {min_dist:.4f}, idx={min_idx}")
+            
+            # Kiểm tra cả ngưỡng khoảng cách và ngưỡng tin cậy tối thiểu
+            if min_dist < distance_threshold and min_dist < absolute_distance_threshold:
+                confidence = 1.0 - min_dist
+                logger.debug(f"[Confidence] Calculated: {confidence:.4f}, Min required: {min_confidence_threshold}")
+                
+                # Chỉ chấp nhận kết quả có độ tin cậy cao
+                if confidence >= min_confidence_threshold:
+                    sid = self.emb_ids[min_idx]
+                    data = self.student_embeddings.get(sid, {})
+                    best_name = data.get("name", "Unknown")
+                    best_id = sid
         else:
-            # Fallback: duyệt từng embedding như cũ
+            # Phương pháp 2: Duyệt từng embedding (phương pháp dự phòng)
             for sid, data in self.student_embeddings.items():
                 try:
                     if "embedding" not in data or data["embedding"] is None:
                         continue
+                    
                     emb = data["embedding"]
-                    norm_db = np.linalg.norm(emb)
-                    logger.debug(f"[DB Embedding][{sid}] shape={emb.shape}, dtype={emb.dtype}, norm={norm_db:.4f}, nan={np.isnan(emb).any()}, inf={np.isinf(emb).any()}")
-                    logger.debug(f"[DB Embedding][{sid}] first 10 values: {emb[:10]}")
-                    dist = cosine(current, emb)
+                    # Đảm bảo emb được chuẩn hóa
+                    emb_norm = np.linalg.norm(emb)
+                    if not (0.99 < emb_norm < 1.01):
+                        emb = emb / (emb_norm + 1e-10)
+                    
+                    # Sử dụng phương thức cosine đã thêm ở trên
+                    dist = self.cosine(current, emb)
                     logger.debug(f"[Cosine Distance] To {sid}: {dist:.4f}")
-                    if dist < self.config.distance_threshold and dist < min_dist:
+                    
+                    # Kiểm tra cả hai ngưỡng và lấy khoảng cách nhỏ nhất
+                    if dist < distance_threshold and dist < absolute_distance_threshold and dist < min_dist:
                         min_dist = dist
-                        best_name = data.get("name", "Unknown")
-                        best_id = sid
+                        confidence = 1.0 - dist
+                        
+                        # Chỉ chấp nhận kết quả có độ tin cậy cao
+                        if confidence >= min_confidence_threshold:
+                            best_name = data.get("name", "Unknown")
+                            best_id = sid
                 except Exception as e:
                     logger.error(f"Error comparing with embedding {sid}: {e}")
+        
+        # Tính độ tin cậy cuối cùng
         confidence = 1.0 - min_dist if best_name != "Unknown" else 0.0
-        logger.info(f"[Nhận diện] Kết quả: {best_name}, Khoảng cách nhỏ nhất: {min_dist:.4f}, Độ tin cậy: {confidence:.2f}")
-        logger.debug(f"Recognition result: {best_name}, distance={min_dist:.4f}, confidence={confidence:.2f}")
         confidence = max(0.0, min(1.0, confidence))
+        
+        # Log kết quả nhận diện
+        logger.info(f"[Nhận diện] Kết quả: {best_name}, Khoảng cách nhỏ nhất: {min_dist:.4f}, Độ tin cậy: {confidence:.2f}")
+        
         return best_name, round(confidence, 2), best_id
 
     def load_embeddings(self, embeddings: Dict[str, Dict[str, Any]]):
@@ -515,3 +580,44 @@ class FaceEmbedding:
             logger.info("Face Embedding module closed and resources released")
         except Exception as e:
             logger.error(f"Error closing Face Embedding module: {e}")
+
+    def test_recognition_thresholds(self, test_img: np.ndarray, distance_range=(0.3, 0.9, 0.05)):
+        """
+        Kiểm tra nhiều ngưỡng khoảng cách khác nhau để tìm ngưỡng tối ưu.
+        Hữu ích khi tinh chỉnh hệ thống.
+        
+        Args:
+            test_img: Ảnh khuôn mặt cần kiểm tra
+            distance_range: Tuple (start, end, step) cho dải ngưỡng cần thử
+            
+        Returns:
+            List[Dict]: Kết quả nhận diện với các ngưỡng khác nhau
+        """
+        if test_img is None or test_img.size == 0:
+            return []
+        
+        test_embedding = self.get_face_embedding(test_img, debug_label="test_threshold")
+        if test_embedding is None:
+            return []
+        
+        results = []
+        original_threshold = self.config.distance_threshold
+        
+        # Lưu trữ cấu hình hiện tại
+        try:
+            # Thử nhiều ngưỡng khác nhau
+            for threshold in np.arange(distance_range[0], distance_range[1], distance_range[2]):
+                self.config.distance_threshold = threshold
+                name, confidence, sid = self.recognize_face(test_img)
+                results.append({
+                    "threshold": threshold,
+                    "result": name,
+                    "confidence": confidence,
+                    "student_id": sid,
+                    "status": "Match" if name != "Unknown" else "Unknown"
+                })
+        finally:
+            # Khôi phục cấu hình ban đầu
+            self.config.distance_threshold = original_threshold
+        
+        return results

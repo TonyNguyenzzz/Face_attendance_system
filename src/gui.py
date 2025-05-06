@@ -711,122 +711,171 @@ class MainWindow(QMainWindow):
 
     def create_settings_tab(self):
         settings_tab = QWidget()
-        layout = QVBoxLayout(settings_tab)
-
-        settings_header = QLabel("CÀI ĐẶT HỆ THỐNG")
-        settings_header.setAlignment(Qt.AlignCenter)
-        settings_header.setStyleSheet("font-size: 22px; font-weight: bold; color: #3498db; margin: 15px 0;")
-        layout.addWidget(settings_header)
-
-        # Dark mode checkbox
-        darkmode_layout = QHBoxLayout()
-        self.darkmode_checkbox = QCheckBox("Bật Dark Mode")
-        self.darkmode_checkbox.setChecked(False)
-        self.darkmode_checkbox.stateChanged.connect(self.toggle_dark_mode)
-        darkmode_layout.addWidget(self.darkmode_checkbox)
-        darkmode_layout.addStretch()
-        layout.addLayout(darkmode_layout)
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.NoFrame)
-
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-
+        settings_layout = QVBoxLayout(settings_tab)
+        
         # Camera settings
-        camera_settings = QGroupBox("Cài đặt Camera")
+        camera_settings = QGroupBox("Cài đặt camera")
         camera_settings_layout = QFormLayout(camera_settings)
+        
         self.camera_source = QComboBox()
-        self.camera_source.addItems(["Camera mặc định", "Camera 0", "Camera 1", "Camera IP"])
+        self.camera_source.addItems(["Camera 0", "Camera 1", "Camera 2"])
+        self.camera_source.setCurrentIndex(self.config.get("camera_id", 0))
+        camera_settings_layout.addRow("Nguồn camera:", self.camera_source)
+        
+        self.camera_fps = QSpinBox()
+        self.camera_fps.setRange(1, 60)
+        self.camera_fps.setValue(self.config.get("camera_fps", 30))
+        camera_settings_layout.addRow("FPS:", self.camera_fps)
+        
         self.camera_resolution = QComboBox()
         self.camera_resolution.addItems(["640x480", "1280x720", "1920x1080"])
-        self.camera_fps = QSpinBox()
-        self.camera_fps.setRange(10, 60)
-        self.camera_fps.setValue(self.config.get('camera_fps', 30))
-        camera_settings_layout.addRow("Nguồn camera:", self.camera_source)
+        current_res = f"{self.config.get('max_dim', 1080)}x{self.config.get('max_dim', 1080)}"
+        self.camera_resolution.setCurrentText(current_res)
         camera_settings_layout.addRow("Độ phân giải:", self.camera_resolution)
-        camera_settings_layout.addRow("FPS:", self.camera_fps)
-        scroll_layout.addWidget(camera_settings)
-
+        
+        settings_layout.addWidget(camera_settings)
+        
         # Face recognition settings
         face_settings = QGroupBox("Cài đặt nhận diện khuôn mặt")
         face_settings_layout = QFormLayout(face_settings)
+        
+        # --- Cài đặt ngưỡng khoảng cách ---
         distance_label = QLabel("Ngưỡng nhận diện khuôn mặt:")
         self.distance_spinbox = QDoubleSpinBox()
-        self.distance_spinbox.setRange(0.5, 1.5)
+        self.distance_spinbox.setRange(0.1, 0.9)
         self.distance_spinbox.setSingleStep(0.01)
-        self.distance_spinbox.setValue(self.config.get('recognition_distance', 0.7))
+        self.distance_spinbox.setValue(self.config.get('recognition_distance', 0.35))
         self.distance_spinbox.setDecimals(2)
-        self.distance_spinbox.setSuffix("")
         face_settings_layout.addRow(distance_label, self.distance_spinbox)
-        # Ngưỡng tin cậy
+        
+        # --- Cài đặt ngưỡng tin cậy tối thiểu ---
+        min_confidence_label = QLabel("Ngưỡng tin cậy tối thiểu:")
+        self.min_confidence_spinbox = QDoubleSpinBox()
+        self.min_confidence_spinbox.setRange(0.4, 0.9)
+        self.min_confidence_spinbox.setSingleStep(0.05)
+        self.min_confidence_spinbox.setValue(self.config.get('min_confidence_threshold', 0.6))
+        self.min_confidence_spinbox.setDecimals(2)
+        self.min_confidence_spinbox.setSuffix("")
+        face_settings_layout.addRow(min_confidence_label, self.min_confidence_spinbox)
+        
+        # --- Cài đặt ngưỡng khoảng cách tuyệt đối ---
+        abs_distance_label = QLabel("Ngưỡng khoảng cách tuyệt đối:")
+        self.abs_distance_spinbox = QDoubleSpinBox()
+        self.abs_distance_spinbox.setRange(0.3, 0.9)
+        self.abs_distance_spinbox.setSingleStep(0.05)
+        self.abs_distance_spinbox.setValue(self.config.get('absolute_distance_threshold', 0.6))
+        self.abs_distance_spinbox.setDecimals(2)
+        face_settings_layout.addRow(abs_distance_label, self.abs_distance_spinbox)
+        
+        # --- Ngưỡng tin cậy hiện tại ---
         self.confidence_threshold = QSpinBox()
         self.confidence_threshold.setRange(30, 100)
-        conf_val = int(self.config.get('recognition_confidence', 0.7) * 100)
+        conf_val = int(self.config.get('recognition_confidence', 0.85) * 100)
         self.confidence_threshold.setValue(conf_val)
         self.confidence_threshold.setSuffix("%")
         face_settings_layout.addRow("Ngưỡng tin cậy:", self.confidence_threshold)
-        scroll_layout.addWidget(face_settings)
-
-        attendance_settings = QGroupBox("Cài đặt điểm danh")
-        attendance_settings_layout = QFormLayout(attendance_settings)
         
-        self.auto_attendance = QCheckBox("Kích hoạt")
-        self.auto_attendance.setChecked(True)
-        self.attendance_window = QSpinBox()
-        self.attendance_window.setRange(1, 120)
-        self.attendance_window.setValue(15)
-        self.attendance_window.setSuffix(" phút")
-        self.late_threshold = QSpinBox()
-        self.late_threshold.setRange(1, 60)
-        self.late_threshold.setValue(10)
-        self.late_threshold.setSuffix(" phút")
+        # Thêm nút kiểm tra ngưỡng
+        test_threshold_btn = QPushButton("Kiểm tra ngưỡng nhận diện")
+        test_threshold_btn.setIcon(QIcon("icons/test.png"))
+        face_settings_layout.addRow("", test_threshold_btn)
         
-        attendance_settings_layout.addRow("Điểm danh tự động:", self.auto_attendance)
-        attendance_settings_layout.addRow("Thời gian điểm danh:", self.attendance_window)
-        attendance_settings_layout.addRow("Ngưỡng đi muộn:", self.late_threshold)
+        settings_layout.addWidget(face_settings)
         
-        database_settings = QGroupBox("Cài đặt cơ sở dữ liệu")
-        database_settings_layout = QVBoxLayout(database_settings)
+        # Database settings
+        db_settings = QGroupBox("Cài đặt cơ sở dữ liệu")
+        db_settings_layout = QFormLayout(db_settings)
         
-        backup_layout = QHBoxLayout()
-        self.backup_db_btn = QPushButton("Sao lưu dữ liệu")
-        self.backup_db_btn.setIcon(QIcon("icons/backup.png"))
-        self.restore_db_btn = QPushButton("Khôi phục dữ liệu")
-        self.restore_db_btn.setIcon(QIcon("icons/restore.png"))
-        backup_layout.addWidget(self.backup_db_btn)
-        backup_layout.addWidget(self.restore_db_btn)
+        backup_btn = QPushButton("Sao lưu cơ sở dữ liệu")
+        backup_btn.clicked.connect(self.backup_database)
+        db_settings_layout.addRow("", backup_btn)
         
-        clear_layout = QHBoxLayout()
-        self.clear_attendance_btn = QPushButton("Xóa dữ liệu điểm danh")
-        self.clear_attendance_btn.setIcon(QIcon("icons/trash.png"))
-        self.clear_attendance_btn.setStyleSheet("background-color: #e74c3c;")
-        clear_layout.addStretch()
-        clear_layout.addWidget(self.clear_attendance_btn)
+        restore_btn = QPushButton("Khôi phục cơ sở dữ liệu")
+        restore_btn.clicked.connect(self.restore_database)
+        db_settings_layout.addRow("", restore_btn)
         
-        database_settings_layout.addLayout(backup_layout)
-        database_settings_layout.addLayout(clear_layout)
+        clear_btn = QPushButton("Xóa dữ liệu điểm danh")
+        clear_btn.clicked.connect(self.clear_attendance_data)
+        db_settings_layout.addRow("", clear_btn)
         
-        save_settings_layout = QHBoxLayout()
-        save_settings_layout.addStretch()
-        self.save_settings_btn = QPushButton("Lưu cài đặt")
-        self.save_settings_btn.setIcon(QIcon("icons/save.png"))
-        self.save_settings_btn.setMinimumWidth(200)
-        self.save_settings_btn.setStyleSheet("background-color: #27ae60; font-weight: bold; padding: 10px; font-size: 14px;")
-        save_settings_layout.addWidget(self.save_settings_btn)
+        settings_layout.addWidget(db_settings)
         
-        scroll_layout.addWidget(camera_settings)
-        scroll_layout.addWidget(face_settings)
-        scroll_layout.addWidget(attendance_settings)
-        scroll_layout.addWidget(database_settings)
-        scroll_layout.addLayout(save_settings_layout)
-        scroll_layout.addStretch()
+        # Save button
+        save_btn = QPushButton("Lưu cài đặt")
+        save_btn.clicked.connect(self.save_settings)
+        settings_layout.addWidget(save_btn)
         
-        scroll_area.setWidget(scroll_content)
-        layout.addWidget(scroll_area)
+        # Kết nối sự kiện cho nút kiểm tra ngưỡng
+        test_threshold_btn.clicked.connect(self.test_recognition_thresholds)
         
         self.tabs.addTab(settings_tab, "Cài đặt")
+
+    def save_settings(self):
+        try:
+            self.config["camera_id"] = self.camera_source.currentIndex()
+            self.config["camera_fps"] = self.camera_fps.value()
+            resolution = self.camera_resolution.currentText()
+            self.config["max_dim"] = int(resolution.split("x")[1])
+            
+            # Cập nhật các ngưỡng nhận diện mới
+            self.config["recognition_distance"] = self.distance_spinbox.value()
+            self.config["recognition_confidence"] = self.confidence_threshold.value() / 100.0
+            self.config["min_confidence_threshold"] = self.min_confidence_spinbox.value()
+            self.config["absolute_distance_threshold"] = self.abs_distance_spinbox.value()
+            
+            # Cập nhật cấu hình cho attendance_system
+            self.attendance_system.config.update(self.config)
+            
+            # Cập nhật các tham số cho FaceEmbedding
+            if hasattr(self.attendance_system, 'face_embedding'):
+                self.attendance_system.face_embedding.config.distance_threshold = self.config["recognition_distance"]
+                
+            QMessageBox.information(self, "Thành công", "Đã lưu cài đặt. Các thay đổi sẽ có hiệu lực ngay lập tức.")
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi", f"Không thể lưu cài đặt: {e}")
+
+    def test_recognition_thresholds(self):
+        """Kiểm tra các ngưỡng khác nhau với ảnh hiện tại"""
+        # Kiểm tra xem có frame hiện tại không
+        if not hasattr(self, 'current_capture_frame') or self.current_capture_frame is None:
+            QMessageBox.warning(self, "Cảnh báo", "Vui lòng bật camera trước khi kiểm tra ngưỡng.")
+            return
+            
+        frame = self.current_capture_frame.copy()
+        
+        # Phát hiện khuôn mặt
+        faces = self.attendance_system.face_embedding.detect_faces(frame)
+        if not faces:
+            QMessageBox.warning(self, "Cảnh báo", "Không phát hiện được khuôn mặt trong khung hình.")
+            return
+            
+        # Lấy khuôn mặt đầu tiên
+        bbox = faces[0]["bbox"]
+        x1, y1, x2, y2 = bbox
+        face_img = frame[y1:y2, x1:x2]
+        
+        # Kiểm tra các ngưỡng khác nhau
+        results = self.attendance_system.face_embedding.test_recognition_thresholds(
+            face_img, distance_range=(0.3, 0.9, 0.05))
+            
+        # Hiển thị kết quả
+        if not results:
+            QMessageBox.warning(self, "Lỗi", "Không thể trích xuất embedding từ khuôn mặt.")
+            return
+            
+        # Tạo báo cáo
+        report = "Kết quả kiểm tra ngưỡng khoảng cách:\n\n"
+        report += "| Ngưỡng | Nhận diện | Độ tin cậy |\n"
+        report += "|--------|-----------|------------|\n"
+        
+        for r in results:
+            threshold = r["threshold"]
+            name = r["result"]
+            confidence = r["confidence"]
+            report += f"| {threshold:.2f} | {name} | {confidence:.2f} |\n"
+            
+        # Hiển thị báo cáo
+        QMessageBox.information(self, "Kết quả kiểm tra ngưỡng", report)
 
     def update_distance_threshold(self, value):
         self.config['recognition_distance'] = value
@@ -1423,13 +1472,11 @@ class MainWindow(QMainWindow):
                 status_item = QTableWidgetItem(status)
                 status_item.setForeground(QBrush(QColor("#2ecc71" if status == "present" else "#e74c3c")))
                 self.recent_attendance_table.setItem(i, 3, status_item)
-            
             # Tổng số sinh viên chỉ tính những người đã đăng ký khuôn mặt (có embedding)
-            total_students = len(self.db.get_all_users())
+            total_students = self.db.get_total_students()
             present_today = len(unique_present)
             absent_today = max(0, total_students - present_today)
             attendance_rate = (present_today / total_students * 100) if total_students > 0 else 0
-
             self.stats_values["Tổng số sinh viên:"].setText(str(total_students))
             self.stats_values["Đã điểm danh:"].setText(str(present_today))
             self.stats_values["Vắng mặt:"].setText(str(absent_today))
@@ -1440,34 +1487,6 @@ class MainWindow(QMainWindow):
                 self.stat_present_label.setText(f"Đã điểm danh: {present_today}")
             if hasattr(self, 'stat_absent_label'):
                 self.stat_absent_label.setText(f"Vắng mặt: {absent_today}")
-
-            # Cập nhật các tile chỉ số lớn trên dashboard
-            import logging
-            logger = logging.getLogger("GUI")
-            logger.info(f"[DEBUG] update_attendance_info: total={total_students}, present={present_today}, absent={absent_today}")
-            if hasattr(self, 'stat_total_label'):
-                logger.info(f"[DEBUG] stat_total_label exists, current text: {self.stat_total_label.text()}")
-                self.stat_total_label.setText(f"Tổng: {total_students}")
-                logger.info(f"[DEBUG] stat_total_label updated: Tổng: {total_students}")
-            else:
-                logger.warning("[DEBUG] stat_total_label does not exist!")
-            if hasattr(self, 'stat_present_label'):
-                logger.info(f"[DEBUG] stat_present_label exists, current text: {self.stat_present_label.text()}")
-                self.stat_present_label.setText(f"Đã điểm danh: {present_today}")
-                logger.info(f"[DEBUG] stat_present_label updated: Đã điểm danh: {present_today}")
-            else:
-                logger.warning("[DEBUG] stat_present_label does not exist!")
-            if hasattr(self, 'stat_absent_label'):
-                logger.info(f"[DEBUG] stat_absent_label exists, current text: {self.stat_absent_label.text()}")
-                self.stat_absent_label.setText(f"Vắng mặt: {absent_today}")
-                logger.info(f"[DEBUG] stat_absent_label updated: Vắng mặt: {absent_today}")
-            else:
-                logger.warning("[DEBUG] stat_absent_label does not exist!")
-            # Nếu muốn hiển thị tỷ lệ điểm danh:
-            # if hasattr(self, 'stat_rate_label'):
-            #     self.stat_rate_label.setText(f"Tỷ lệ điểm danh: {attendance_rate:.1f}%")
-            #     logger.info(f"[DEBUG] stat_rate_label updated: Tỷ lệ điểm danh: {attendance_rate:.1f}%")
-
             # Cập nhật số liệu cho thanh trạng thái
             if hasattr(self, 'update_statusbar_stats'):
                 self.update_statusbar_stats(total_students, present_today, absent_today)
@@ -1475,20 +1494,6 @@ class MainWindow(QMainWindow):
             import logging
             logger_gui = logging.getLogger("GUI")
             logger_gui.error(f"[DEBUG] Error in update_attendance_info: {e}")
-
-    # ... (rest of the code remains the same)
-            self.attendance_table.setRowCount(len(records))
-            for i, (name, student_id, class_name, date, time, status) in enumerate(records):
-                self.attendance_table.setItem(i, 0, QTableWidgetItem(name))
-                self.attendance_table.setItem(i, 1, QTableWidgetItem(student_id))
-                self.attendance_table.setItem(i, 2, QTableWidgetItem(class_name))
-                self.attendance_table.setItem(i, 3, QTableWidgetItem(time))
-                self.attendance_table.setItem(i, 4, QTableWidgetItem(status))
-        except Exception as e:
-            # logger.error(f"Error in update_attendance_info: {e}")
-            import traceback
-            print('Error in update_attendance_info:', e)
-            print(traceback.format_exc())
 
     def update_users_table(self):
         try:
@@ -1528,7 +1533,7 @@ class MainWindow(QMainWindow):
                         self.report_table.setItem(i, j, QTableWidgetItem(str(value)))
             # Cập nhật thống kê
             # Tổng số sinh viên chỉ tính những người đã đăng ký khuôn mặt (có embedding)
-            total_students = len(self.db.get_all_users())
+            total_students = self.db.get_total_students()
             total_sessions = len(set(r[3] for r in records)) if records else 0  # r[3]: ngày
             present_count = sum(1 for r in records if r[5] == "present")
             absent_count = sum(1 for r in records if r[5] == "absent")
@@ -1631,7 +1636,8 @@ class MainWindow(QMainWindow):
             self.config["max_dim"] = int(resolution.split("x")[1])
             self.config["recognition_distance"] = self.distance_spinbox.value()
             self.config["recognition_confidence"] = self.confidence_threshold.value() / 100.0
-            self.config["late_threshold"] = self.late_threshold.value()
+            self.config["min_confidence_threshold"] = self.min_confidence_spinbox.value()
+            self.config["absolute_distance_threshold"] = self.abs_distance_spinbox.value()
             self.attendance_system.config.update(self.config)
             QMessageBox.information(self, "Thành công", "Đã lưu cài đặt.")
         except Exception as e:
