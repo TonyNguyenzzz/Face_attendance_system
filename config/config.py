@@ -22,8 +22,12 @@ DEFAULT_CONFIG = {
     "scrfd_model": "scrfd_2.5g.onnx",
     # Tham số nhận diện
     "detector_confidence": 0.7,  # Ngưỡng phát hiện khuôn mặt (SCRFD)
-    "recognition_distance": 0.35,      #Ngưỡng khoảng cách nhận diện (FaceNet) - Giảm xuống để tăng độ chính xác
-    "recognition_confidence": 0.85,      # Ngưỡng confidence lọc kết quả nhận diện cuối - Tăng lên để giảm nhận diện sai
+    "recognition_distance": 0.35,      # Ngưỡng khoảng cách nhận diện - Giảm để tăng độ chính xác
+    "recognition_confidence": 0.85,      # Ngưỡng tin cậy - Tăng để giảm nhận diện sai
+    "min_confidence": 0.6,  # Ngưỡng tin cậy tối thiểu
+    "distance_threshold": 0.95,  # Ngưỡng khoảng cách
+    "min_confidence_threshold": 0.6,  # Ngưỡng tin cậy tối thiểu để nhận diện
+    "absolute_distance_threshold": 0.6,  # Ngưỡng khoảng cách tối đa
     # Kích thước ảnh đầu vào
     "max_dim": 1080,                # Mặc định
     "face_size": (160, 160),       # Mặc định: (160, 160)

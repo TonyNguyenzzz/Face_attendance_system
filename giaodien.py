@@ -1728,7 +1728,7 @@ QStatusBar { background: #23272f; color: #00bcd4; }
             # logger.error(f"Error in restore_database: {e}")
             QMessageBox.critical(self, "Lỗi", f"Không thể khôi phục: {e}")
 
-    def backup_database(self):
+{{ ... }}
         try:
             path = QFileDialog.getSaveFileName(self, "Sao lưu cơ sở dữ liệu", "", "SQLite Database (*.db)")[0]
             if path:
