@@ -10,6 +10,8 @@ from database_handler import DatabaseHandler
 
 # Setup logging
 logger = logging.getLogger("AttendanceSystem")
+# Thiết lập mức độ logging cao hơn để loại bỏ thông báo không cần thiết
+logger.setLevel(logging.ERROR)
 
 class AttendanceSystem:
     def __init__(self, config, db_handler: Optional[DatabaseHandler] = None):
@@ -63,17 +65,15 @@ class AttendanceSystem:
         # Use face_embedding module to process image
         img, recognized_faces = self.face_embedding.process_image(image)
         
-        # Log hash of input image before passing to embedding (if ndarray)
-        if isinstance(image, np.ndarray):
-            logger.debug(f"[Realtime] Input image hash: {hash(image.tobytes())}")
+        # Đã loại bỏ log debug không cần thiết về hash của ảnh đầu vào
             
         # Create a copy of the image for drawing
         result_img = img.copy()
         
-        # Lấy các ngưỡng từ config
-        recog_threshold = 1 - self.config["recognition_distance"]
-        min_confidence = self.config.get("min_confidence_threshold", 0.6)
-        abs_threshold = self.config.get("absolute_distance_threshold", 0.6)
+        # Lấy các ngưỡng từ config - đảm bảo đồng bộ với config.py
+        recog_threshold = 1 - self.config["recognition_distance"] # Chuyển đổi khoảng cách thành ngưỡng tin cậy
+        min_confidence = self.config.get("min_confidence_threshold", 0.6) # Ngưỡng tin cậy tối thiểu
+        abs_threshold = self.config.get("absolute_distance_threshold", 0.6) # Ngưỡng khoảng cách tuyệt đối
         
         # Process recognized faces with stricter criteria
         for face in recognized_faces:

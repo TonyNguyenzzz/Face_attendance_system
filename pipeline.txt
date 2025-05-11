@@ -196,3 +196,15 @@ Face-Attendance-System/
 │
 └── tests/
     └── (unit test cho từng module)
+
+
+
+    # Giải thích về cấu hình trong face_embedding.py và config.py
+File face_embedding.py không phải là nơi để cấu hình lại các tham số, mà là nơi định nghĩa cấu trúc dữ liệu FaceEmbeddingConfig và hàm chuyển đổi dict_to_face_embedding_config để đọc cấu hình từ config.py .
+
+Cụ thể:
+
+1. FaceEmbeddingConfig là một lớp định nghĩa cấu trúc dữ liệu với các giá trị mặc định, giúp kiểm tra kiểu dữ liệu và cung cấp phương thức get() để truy xuất các tham số.
+2. Hàm dict_to_face_embedding_config có nhiệm vụ chuyển đổi từ dictionary (từ config.py ) sang đối tượng FaceEmbeddingConfig để sử dụng trong module nhận diện khuôn mặt.
+3. Khi khởi tạo FaceEmbedding , nó sẽ nhận cấu hình từ config.py và chuyển đổi thành đối tượng FaceEmbeddingConfig để sử dụng nội bộ.
+Đây là mô hình thiết kế phổ biến trong lập trình: tách biệt cấu hình (trong config.py ) và logic xử lý (trong face_embedding.py ), giúp code dễ bảo trì và mở rộng hơn.

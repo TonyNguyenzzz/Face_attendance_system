@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QProgressBar, QProgressDialog, QScrollArea, QGridLayout, QSizePolicy, QStatusBar, QHeaderView, QSlider
 )
 from PyQt5.QtGui import QBrush, QColor, QPixmap, QImage, QFont, QIcon
-from PyQt5.QtCore import Qt, QTimer, QDate, QThread, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, QTimer, QDate, QThread, pyqtSignal, QSize, QMutexLocker
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from camera_handler import CameraHandler
@@ -28,15 +28,15 @@ from face_embedding import FaceEmbedding
 from face_recognition import AttendanceSystem
 from config.config import DEFAULT_CONFIG
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("GUI")
-logging.getLogger("FaceEmbedding").setLevel(logging.INFO)
-logging.getLogger("AttendanceSystem").setLevel(logging.INFO)
+logging.getLogger("FaceEmbedding").setLevel(logging.WARNING)
+logging.getLogger("AttendanceSystem").setLevel(logging.WARNING)
 
 # Thiết lập logger GUI
 import sys
 logger_gui = logging.getLogger("GUI")
-logger_gui.setLevel(logging.INFO)
+logger_gui.setLevel(logging.WARNING)
 if not logger_gui.handlers:
     handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
@@ -56,8 +56,16 @@ class AIProcessingThread(QThread):
 
     def set_frame(self, frame: np.ndarray):
         if not self.processing:
-            self.current_frame = frame.copy()
-            self.processing = True
+            if frame is not None:
+                try:
+                    self.current_frame = frame.copy()
+                    self.processing = True
+                except Exception as e:
+                    logger.error(f"Error copying frame in AIProcessingThread: {e}", exc_info=True)
+                    self.current_frame = None
+                    self.processing = False # Ensure processing is reset
+            else:
+                logger.warning("AIProcessingThread received a None frame. Skipping.")
 
     def run(self):
         while self.running:
@@ -67,12 +75,13 @@ class AIProcessingThread(QThread):
             try:
                 processed_frame, faces = self.attendance_system.process_image(self.current_frame)
                 self.processing_done.emit(processed_frame, faces)
-                self.current_frame = None
-                self.processing = False
-                self.msleep(10)
             except Exception as e:
-                logger.error(f"AI processing error: {e}")
+                logger.error(f"AI processing error in thread: {e}", exc_info=True)
+                # Consider emitting an error signal to the GUI if this happens frequently
+            finally:
+                self.current_frame = None # Always clear frame after processing or error
                 self.processing = False
+                self.msleep(10) # Adjust sleep as needed, maybe longer after error
                 pass
 
 STYLESHEET = """
@@ -187,17 +196,17 @@ class MainWindow(QMainWindow):
 
     def feed_ai_thread_with_camera_frame(self):
         if self.camera_handler.isRunning() and not self.ai_thread.processing:
-            from PyQt5.QtCore import QMutexLocker
+            # from PyQt5.QtCore import QMutexLocker # Removed local import
             with QMutexLocker(self.camera_handler.lock):
                 frame = self.camera_handler.frame
             if frame is not None:
                 self.ai_thread.set_frame(frame)
 
     def _on_camera_frame(self, frame):
-        print(f'[DEBUG] _on_camera_frame called. Frame shape: {getattr(frame, "shape", None)}')
+        # # print(f'[DEBUG] _on_camera_frame called. Frame shape: {getattr(frame, "shape", None)}') # Removed debug print
+        # logger_gui.debug(f'_on_camera_frame called. Frame shape: {getattr(frame, "shape", None)}, AI processing: {self.ai_thread.processing}') # Changed to logger.debug
         self.is_processing = True
         self.show_spinner(True)
-        # KHÔNG truyền frame vào AI thread ở đây nữa (đã dùng timer)
         pass
 
     def init_shortcuts(self):
@@ -882,14 +891,14 @@ class MainWindow(QMainWindow):
         # Cập nhật trực tiếp vào hệ thống nhận diện nếu đã khởi tạo
         if hasattr(self.attendance_system, 'face_embedding'):
             self.attendance_system.face_embedding.config.distance_threshold = value
-        # logger.info(f"Cập nhật ngưỡng nhận diện: {value}")
+        # # logger.info(f"Cập nhật ngưỡng nhận diện: {value}")
         # Cập nhật label giá trị động nếu có
         if hasattr(self, 'distance_value_label'):
             self.distance_value_label.setText(f"{float(value):.2f}")
 
     def update_confidence_threshold(self, value):
         self.config['recognition_confidence'] = value / 100.0
-        # logger.info(f"Cập nhật ngưỡng tin cậy: {self.config['recognition_confidence']}")
+        # # logger.info(f"Cập nhật ngưỡng tin cậy: {self.config['recognition_confidence']}")
         if hasattr(self.attendance_system, 'face_embedding'):
             self.attendance_system.face_embedding.config.recognition_confidence = self.config['recognition_confidence']
 
@@ -915,40 +924,40 @@ class MainWindow(QMainWindow):
 
 
     def setup_connections(self):
-        print('[DEBUG] Connecting start_camera_btn to toggle_camera')
+        # # print('[DEBUG] Connecting start_camera_btn to toggle_camera')
         self.start_camera_btn.clicked.connect(self.toggle_camera)
-        print('[DEBUG] Connecting take_attendance_btn to manual_attendance')
+        # # print('[DEBUG] Connecting take_attendance_btn to manual_attendance')
         self.take_attendance_btn.clicked.connect(self.manual_attendance)
         if hasattr(self, 'refresh_attendance_btn'):
-            print('[DEBUG] Connecting refresh_attendance_btn to update_attendance_info')
+            # # print('[DEBUG] Connecting refresh_attendance_btn to update_attendance_info')
             self.refresh_attendance_btn.clicked.connect(self.update_attendance_info)
-        print('[DEBUG] Connecting camera_handler.frame_ready to _on_camera_frame')
+        # # print('[DEBUG] Connecting camera_handler.frame_ready to _on_camera_frame')
         self.camera_handler.frame_ready.connect(self._on_camera_frame)
-        print('[DEBUG] Connecting ai_thread.processing_done to update_frame')
+        # # print('[DEBUG] Connecting ai_thread.processing_done to update_frame')
         self.ai_thread.processing_done.connect(self.update_frame)
         if hasattr(self, 'export_report_excel_btn'):
-            print('[DEBUG] Connecting export_report_excel_btn to export_report_to_excel')
+            # # print('[DEBUG] Connecting export_report_excel_btn to export_report_to_excel')
             self.export_report_excel_btn.clicked.connect(self.export_report_to_excel)
         if hasattr(self, 'export_report_pdf_btn'):
-            print('[DEBUG] Connecting export_report_pdf_btn to export_report_to_pdf')
+            # # print('[DEBUG] Connecting export_report_pdf_btn to export_report_to_pdf')
             self.export_report_pdf_btn.clicked.connect(self.export_report_to_pdf)
         if hasattr(self, 'save_settings_btn'):
-            print('[DEBUG] Connecting save_settings_btn to save_settings')
+            # # print('[DEBUG] Connecting save_settings_btn to save_settings')
             self.save_settings_btn.clicked.connect(self.save_settings)
         if hasattr(self, 'backup_db_btn'):
-            print('[DEBUG] Connecting backup_db_btn to backup_database')
+            # # print('[DEBUG] Connecting backup_db_btn to backup_database')
             self.backup_db_btn.clicked.connect(self.backup_database)
         if hasattr(self, 'restore_db_btn'):
-            print('[DEBUG] Connecting restore_db_btn to restore_database')
+            # # print('[DEBUG] Connecting restore_db_btn to restore_database')
             self.restore_db_btn.clicked.connect(self.restore_database)
         if hasattr(self, 'clear_attendance_btn'):
-            print('[DEBUG] Connecting clear_attendance_btn to clear_attendance_data')
+            # # print('[DEBUG] Connecting clear_attendance_btn to clear_attendance_data')
             self.clear_attendance_btn.clicked.connect(self.clear_attendance_data)
         if hasattr(self, 'edit_user_btn'):
-            print('[DEBUG] Connecting edit_user_btn to edit_user')
+            # # print('[DEBUG] Connecting edit_user_btn to edit_user')
             self.edit_user_btn.clicked.connect(self.edit_user)
         if hasattr(self, 'delete_user_btn'):
-            print('[DEBUG] Connecting delete_user_btn to delete_user')
+            # # print('[DEBUG] Connecting delete_user_btn to delete_user')
             self.delete_user_btn.clicked.connect(self.delete_user)
 
     def toggle_camera(self):
@@ -978,11 +987,12 @@ class MainWindow(QMainWindow):
 
     def update_frame(self, frame: np.ndarray, faces: list):
         try:
-            print(f'[DEBUG] update_frame called. Frame shape: {getattr(frame, "shape", None)}, faces: {faces}')
+            # # print(f'[DEBUG] update_frame called. Frame shape: {getattr(frame, "shape", None)}, faces: {faces}')
             self.is_processing = False
             pix = self.convert_cv_qt(frame)
             if pix.isNull():
-                print('[DEBUG] convert_cv_qt returned null QPixmap!')
+                # # print('[DEBUG] convert_cv_qt returned null QPixmap!')
+                return
             self.camera_view.setPixmap(pix)
             # Hiển thị thông tin nhận diện realtime
             if faces:
@@ -1090,7 +1100,7 @@ class MainWindow(QMainWindow):
 
     def update_face_preview(self, frame):
         try:
-            # logger.info(f"[Register] Frame hash: {hash(frame.tobytes())}")
+            # # logger.info(f"[Register] Frame hash: {hash(frame.tobytes())}")
             self.current_capture_frame = frame.copy()
             if self.capture_auto and self.capture_index < 30:
                 if not hasattr(self, 'last_capture_time') or (time.time() - self.last_capture_time) > 1.0:
@@ -1109,7 +1119,7 @@ class MainWindow(QMainWindow):
                                 self.capture_index += 1
                                 self.capture_progress.setValue(self.capture_index)
                                 self.capture_status.setText(f"{self.capture_index}/{30} ảnh đã thu thập")
-                                # logger.info(f"[Capture] Saved face region: bbox=({x1},{y1},{x2},{y2}), shape={face_img.shape}")
+                                # # logger.info(f"[Capture] Saved face region: bbox=({x1},{y1},{x2},{y2}), shape={face_img.shape}")
                                 self.last_capture_time = time.time()
                                 if self.capture_index <= 5:
                                     pix = self.convert_cv_qt(face_img)
@@ -1127,7 +1137,7 @@ class MainWindow(QMainWindow):
                             # logger.warning(f"[Capture] No valid bbox in detected face: {faces[0]}")
                             pass
                     else:
-                        # logger.info("[Capture] No face detected in frame, skip.")
+                        # # logger.info("[Capture] No face detected in frame, skip.")
                         pass
         except Exception as e:
             # logger.error(f"Error in update_face_preview: {e}")
@@ -1211,10 +1221,10 @@ class MainWindow(QMainWindow):
                     return
                 # Lấy trung bình embedding của 30 ảnh
                 self.trained_embedding = np.mean(embs, axis=0)
-                # logger.info(f'Đã tính trung bình embedding từ {len(embs)} ảnh.')
+                # # logger.info(f'Đã tính trung bình embedding từ {len(embs)} ảnh.')
                 self.reload_embeddings()
                 QMessageBox.information(self, 'Hoàn thành', f'Đã huấn luyện từ {len(embs)} ảnh. Hệ thống đã cập nhật dữ liệu nhận diện.')
-                # logger.info('Huấn luyện thành công, đã cập nhật embeddings.')
+                # # logger.info('Huấn luyện thành công, đã cập nhật embeddings.')
                 self.register_btn.setEnabled(True)
 
             def error_slot(msg):
@@ -1234,7 +1244,7 @@ class MainWindow(QMainWindow):
     def reload_embeddings(self):
         try:
             self.attendance_system.update_embeddings()
-            # logger.info('Reloaded embeddings from database.')
+            # # logger.info('Reloaded embeddings from database.')
         except Exception as e:
             # logger.error(f'Error reloading embeddings: {e}')
             pass
@@ -1317,16 +1327,16 @@ class MainWindow(QMainWindow):
             self.reload_embeddings()
             # === Lưu các ảnh đã đăng ký ra thư mục riêng ===
             try:
-                # # logger.debug(f'[DEBUG] name={name}, student_id={student_id}')
-                # # logger.debug(f'[DEBUG] Số lượng self.captured_frames: {len(self.captured_frames)}')
+                # # # logger.debug(f'[DEBUG] name={name}, student_id={student_id}')
+                # # # logger.debug(f'[DEBUG] Số lượng self.captured_frames: {len(self.captured_frames)}')
                 import re
                 # Tạo tên thư mục đúng định dạng: 'Họ và tên _ MãSV'
                 dir_name = f"{name} _ {student_id}"
                 # Loại bỏ ký tự đặc biệt không hợp lệ cho Windows
                 safe_dir_name = re.sub(r'[\\/:*?\"<>|]', '_', dir_name)
                 save_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'Image', safe_dir_name)
-                # # logger.debug(f'[DEBUG] save_dir: {save_dir}, abs: {os.path.abspath(save_dir)}')
-                # # logger.debug(f'[DEBUG] cwd: {os.getcwd()}')
+                # # # logger.debug(f'[DEBUG] save_dir: {save_dir}, abs: {os.path.abspath(save_dir)}')
+                # # # logger.debug(f'[DEBUG] cwd: {os.getcwd()}')
                 if not self.captured_frames or len(self.captured_frames) == 0:
                     # logger.error('[ERROR] Không có ảnh nào trong self.captured_frames để lưu.')
                     QMessageBox.critical(self, 'Lỗi', 'Không có ảnh nào được thu thập để lưu. Vui lòng chụp ảnh trước khi đăng ký.')
@@ -1356,15 +1366,12 @@ class MainWindow(QMainWindow):
                                 embedding = self.attendance_system.face_embedding.get_face_embedding(frame)
                                 if embedding is not None:
                                     norm = float(np.linalg.norm(embedding))
-                                    emb_path = os.path.join(save_dir, f'embedding_recognize_input_{idx+1}.txt')
-                                    with open(emb_path, 'w', encoding='utf-8') as f:
-                                        f.write(str(embedding.tolist()) + "\n")
-                                        f.write(f"Norm: {norm}\n")
+                                    pass # Đã bỏ qua việc lưu file embedding để giảm thiểu file log không cần thiết
                     except Exception as e:
                         # logger.error(f'[LỖI] Exception khi lưu ảnh hoặc embedding {img_path}: {e}')
                         save_success = False
                 if save_success:
-                    # logger.info(f'Đã lưu {len(self.captured_frames)} ảnh đăng ký vào {save_dir}')
+                    # # logger.info(f'Đã lưu {len(self.captured_frames)} ảnh đăng ký vào {save_dir}')
                     # Mở thư mục chứa ảnh sau khi lưu thành công
                     import subprocess, sys
                     if sys.platform.startswith('win'):
@@ -1380,7 +1387,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, 'Lỗi', f'Lỗi khi lưu ảnh đăng ký: {e}')
 
             QMessageBox.information(self, 'Thành công', f'Đã đăng ký {name} với {len(self.captured_frames)} ảnh. Hệ thống đã cập nhật dữ liệu nhận diện.')
-            # logger.info(f'Đăng ký user {name} thành công và đã cập nhật embeddings.')
+            # # logger.info(f'Đăng ký user {name} thành công và đã cập nhật embeddings.')
             self.name_input.clear()
             self.student_id_input.clear()
             self.class_input.clear()
@@ -1493,7 +1500,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             import logging
             logger_gui = logging.getLogger("GUI")
-            logger_gui.error(f"[DEBUG] Error in update_attendance_info: {e}")
+            # logger_gui.error(f"[DEBUG] Error in update_attendance_info: {e}")
 
     def update_users_table(self):
         try:

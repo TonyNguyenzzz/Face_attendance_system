@@ -1,76 +1,149 @@
-from PyQt5.QtCore import QThread, pyqtSignal
-import numpy as np
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer
 import logging
 import time
+from typing import List, Optional, Any, Dict, Tuple
 
 class TrainWorker(QThread):
-    # Signal cập nhật: (frame hiện tại, tổng số frame, số embedding thành công)
     progress = pyqtSignal(int, int, int)
-    # Signal khi hoàn thành: trả về danh sách embedding và số lượng thất bại
     done = pyqtSignal(list, int)
-    error = pyqtSignal(str)
+    error = pyqtSignal(str, dict)
 
-    def __init__(self, face_embedding, frames, delay=0.5):
-        """
-        Khởi tạo worker thread để tạo face embeddings
-        
-        Args:
-            face_embedding: Đối tượng xử lý face embedding
-            frames: Danh sách các frame ảnh cần xử lý
-            delay: Thời gian chờ giữa các lần xử lý (giây)
-        """
+    def __init__(self, face_embedding, frames, delay=0.5, batch_size=1, 
+                 embedding_threshold=None, config=None):
         super().__init__()
         self.face_embedding = face_embedding
         self.frames = frames
         self.delay = delay
-        self._is_cancelled = False
+        self.batch_size = max(1, batch_size)
+        self.config = config or {}
+        # Sử dụng ngưỡng từ config nếu không được chỉ định
+        # Đồng bộ với cách sử dụng trong face_recognition.py và face_embedding.py
+        # face_recognition.py sử dụng min_confidence_threshold
+        # face_embedding.py sử dụng min_confidence_threshold và absolute_distance_threshold
+        self.embedding_threshold = embedding_threshold if embedding_threshold is not None else \
+                                  self.config.get("min_confidence_threshold", 0.6)
         
-        # Thiết lập logging
+        # Khởi tạo logger với mức độ cao hơn để loại bỏ thông báo không cần thiết
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.ERROR)
+        
+
+        self._is_cancelled = False
+        self._timer = QTimer()
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._process_next_batch)
+
+        self.logger = logging.getLogger(__name__)
+        self._current_index = 0
+        self._total_frames = len(frames) if frames else 0
+        self._successful_embs = []
+        self._failed_frames = 0
+
+        if not frames:
+            self.logger.warning("No frames provided for processing")
+
+    def __del__(self):
+        self.clean_up()
+
+    def clean_up(self):
+        if hasattr(self, '_timer') and self._timer:
+            self._timer.stop()
+        self._is_cancelled = True
 
     def cancel(self):
-        """Hủy quá trình xử lý hiện tại"""
         self._is_cancelled = True
+        if hasattr(self, '_timer') and self._timer:
+            self._timer.stop()
         self.logger.info("Train worker cancelled")
 
-    def run(self):
-        """Thực hiện trích xuất embedding từ danh sách frames"""
-        embs = []
-        failed_frames = 0
-        total_frames = len(self.frames)
-        
-        self.logger.info(f"Starting embedding extraction for {total_frames} frames")
-        
+    def validate_frame(self, frame) -> bool:
+        if frame is None:
+            return False
         try:
-            for i, frame in enumerate(self.frames):
-                # Kiểm tra nếu quá trình bị hủy
-                if self._is_cancelled:
-                    self.logger.info("Process cancelled, stopping extraction")
-                    break
+            shape = frame.shape
+            if len(shape) < 2 or (len(shape) == 3 and shape[2] not in [1, 3, 4]):
+                self.logger.warning(f"Invalid frame shape: {shape}")
+                return False
+        except (AttributeError, TypeError):
+            self.logger.warning("Frame is not a valid image array")
+            return False
+        return True
+
+    def process_batch(self, batch_frames: List[Any]) -> List[Tuple[int, Optional[Any]]]:
+        results = []
+        for idx, frame in batch_frames:
+            if not self.validate_frame(frame):
+                self.logger.warning(f"Frame {idx+1} validation failed, skipping")
+                results.append((idx, None))
+                continue
+
+            try:
+                # Sử dụng các tham số từ config một cách nhất quán
+                # Lưu ý: phương thức get_face_embedding chỉ nhận tham số debug_label
+                # Các tham số ngưỡng được cấu hình trong FaceEmbedding khi khởi tạo
+                # từ config, không truyền trực tiếp vào phương thức
+                emb = self.face_embedding.get_face_embedding(
+                    frame,
+                    debug_label=f"train_frame_{idx+1}"
+                )
+                # Đã loại bỏ log debug không cần thiết về các ngưỡng
                 
-                # Trích xuất embedding
-                self.logger.debug(f"Processing frame {i+1}/{total_frames}")
-                emb = self.face_embedding.get_face_embedding(frame)
-                
-                # Xử lý kết quả
-                if emb is not None:
-                    embs.append(emb)
-                    self.logger.debug(f"Successfully extracted embedding from frame {i+1}")
-                else:
-                    failed_frames += 1
-                    self.logger.warning(f"Failed to extract embedding from frame {i+1}")
-                
-                # Phát tín hiệu tiến độ: (frame hiện tại, tổng frames, số embedding thành công)
-                self.progress.emit(i + 1, total_frames, len(embs))
-                
-                # Delay nếu cần
-                if self.delay > 0 and i < total_frames - 1:  # Không delay ở frame cuối cùng
-                    time.sleep(self.delay)
-            
-            # Báo kết quả
-            self.logger.info(f"Embedding extraction completed. Success: {len(embs)}, Failed: {failed_frames}")
-            self.done.emit(embs, failed_frames)
-            
+                results.append((idx, emb))
+            except Exception as e:
+                self.logger.error(f"Error processing frame {idx+1}: {str(e)}")
+                results.append((idx, None))
+
+        return results
+
+    def _process_next_batch(self):
+        if self._is_cancelled or self._current_index >= self._total_frames:
+            self._finish_processing()
+            return
+
+        batch_end = min(self._current_index + self.batch_size, self._total_frames)
+        batch_frames = [(i, self.frames[i]) for i in range(self._current_index, batch_end)]
+        batch_results = self.process_batch(batch_frames)
+
+        for idx, emb in batch_results:
+            if emb is not None:
+                self._successful_embs.append(emb)
+            else:
+                self._failed_frames += 1
+
+        self._current_index = batch_end
+        self.progress.emit(
+            self._current_index,
+            self._total_frames,
+            len(self._successful_embs)
+        )
+
+        if not self._is_cancelled and self._current_index < self._total_frames:
+            self._timer.start(int(self.delay * 1000))
+        else:
+            self._finish_processing()
+
+    def _finish_processing(self):
+        if not self._is_cancelled:
+            self.logger.info(f"Embedding completed. Success: {len(self._successful_embs)}, Failed: {self._failed_frames}")
+            self.done.emit(self._successful_embs, self._failed_frames)
+
+    def run(self):
+        try:
+            if not self.frames:
+                error_info = {"reason": "empty_frames", "message": "No frames to process"}
+                self.error.emit("No frames provided for processing", error_info)
+                return
+
+            self._current_index = 0
+            self._successful_embs = []
+            self._failed_frames = 0
+            self._is_cancelled = False
+            self._process_next_batch()
+
         except Exception as e:
-            self.logger.error(f"Error during embedding extraction: {str(e)}")
-            self.error.emit(str(e))
+            error_details = {
+                "type": type(e).__name__,
+                "message": str(e)
+            }
+            self.logger.error(f"Error during embedding extraction: {str(e)}", exc_info=True)
+            self.error.emit(f"Error during embedding extraction: {str(e)}", error_details)

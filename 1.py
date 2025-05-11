@@ -28,20 +28,11 @@ from face_embedding import FaceEmbedding
 from face_recognition import AttendanceSystem
 from config.config import DEFAULT_CONFIG
 
-logging.basicConfig(level=logging.INFO)
+# Áp dụng cấu hình logging từ DEFAULT_CONFIG
+from src.logging_config import configure_logging
+configure_logging(DEFAULT_CONFIG)
 logger = logging.getLogger("GUI")
-logging.getLogger("FaceEmbedding").setLevel(logging.INFO)
-logging.getLogger("AttendanceSystem").setLevel(logging.INFO)
-
-# Thiết lập logger GUI
-import sys
 logger_gui = logging.getLogger("GUI")
-logger_gui.setLevel(logging.INFO)
-if not logger_gui.handlers:
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
-    handler.setFormatter(formatter)
-    logger_gui.addHandler(handler)
 
 # Tách thread xử lý AI
 class AIProcessingThread(QThread):
@@ -194,7 +185,7 @@ class MainWindow(QMainWindow):
                 self.ai_thread.set_frame(frame)
 
     def _on_camera_frame(self, frame):
-        print(f'[DEBUG] _on_camera_frame called. Frame shape: {getattr(frame, "shape", None)}')
+        # Đã loại bỏ print debug để giảm thông báo
         self.is_processing = True
         self.show_spinner(True)
         # KHÔNG truyền frame vào AI thread ở đây nữa (đã dùng timer)
@@ -1442,27 +1433,14 @@ class MainWindow(QMainWindow):
                 self.stat_absent_label.setText(f"Vắng mặt: {absent_today}")
 
             # Cập nhật các tile chỉ số lớn trên dashboard
-            import logging
-            logger = logging.getLogger("GUI")
-            logger.info(f"[DEBUG] update_attendance_info: total={total_students}, present={present_today}, absent={absent_today}")
             if hasattr(self, 'stat_total_label'):
-                logger.info(f"[DEBUG] stat_total_label exists, current text: {self.stat_total_label.text()}")
                 self.stat_total_label.setText(f"Tổng: {total_students}")
-                logger.info(f"[DEBUG] stat_total_label updated: Tổng: {total_students}")
-            else:
-                logger.warning("[DEBUG] stat_total_label does not exist!")
+            
             if hasattr(self, 'stat_present_label'):
-                logger.info(f"[DEBUG] stat_present_label exists, current text: {self.stat_present_label.text()}")
                 self.stat_present_label.setText(f"Đã điểm danh: {present_today}")
-                logger.info(f"[DEBUG] stat_present_label updated: Đã điểm danh: {present_today}")
-            else:
-                logger.warning("[DEBUG] stat_present_label does not exist!")
+            
             if hasattr(self, 'stat_absent_label'):
-                logger.info(f"[DEBUG] stat_absent_label exists, current text: {self.stat_absent_label.text()}")
                 self.stat_absent_label.setText(f"Vắng mặt: {absent_today}")
-                logger.info(f"[DEBUG] stat_absent_label updated: Vắng mặt: {absent_today}")
-            else:
-                logger.warning("[DEBUG] stat_absent_label does not exist!")
             # Nếu muốn hiển thị tỷ lệ điểm danh:
             # if hasattr(self, 'stat_rate_label'):
             #     self.stat_rate_label.setText(f"Tỷ lệ điểm danh: {attendance_rate:.1f}%")
@@ -1472,9 +1450,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'update_statusbar_stats'):
                 self.update_statusbar_stats(total_students, present_today, absent_today)
         except Exception as e:
-            import logging
-            logger_gui = logging.getLogger("GUI")
-            logger_gui.error(f"[DEBUG] Error in update_attendance_info: {e}")
+            logger_gui.error(f"Lỗi cập nhật thông tin điểm danh: {e}")
 
     # ... (rest of the code remains the same)
             self.attendance_table.setRowCount(len(records))

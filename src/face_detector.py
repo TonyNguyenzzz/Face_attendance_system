@@ -2,7 +2,12 @@ import os
 import cv2
 import numpy as np
 import onnxruntime as ort
+import logging
 from onnxruntime import InferenceSession
+
+# Thiết lập logger với mức độ cao hơn để loại bỏ thông báo không cần thiết
+logger = logging.getLogger("FaceDetector")
+logger.setLevel(logging.WARNING)
 
 def distance2bbox(points, distance, max_shape=None):
     """Decode distance prediction to bounding box.
@@ -74,8 +79,9 @@ class FaceDetector:
             if not onnx_file or not os.path.exists(onnx_file):
                 raise FileNotFoundError(f"ONNX model file not found: {onnx_file}")
             
-            # Choose appropriate provider (GPU if available, otherwise CPU)
-            providers = ['CUDAExecutionProvider'] if 'CUDAExecutionProvider' in ort.get_available_providers() else ['CPUExecutionProvider']
+            # Sử dụng module onnx_config để cấu hình providers phù hợp
+            from onnx_config import configure_onnx_providers
+            providers = configure_onnx_providers()
             self.session = InferenceSession(onnx_file, providers=providers)
             
         self._init_vars()

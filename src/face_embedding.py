@@ -81,7 +81,7 @@ class FaceEmbedding:
             logger.error(f"Face detection model not found at: {model_path}")
             raise FileNotFoundError(f"Model not found: {model_path}")
         self.face_detector = FaceDetector(model_path)
-        logger.info("Face Embedding module initialized with DeepFace (facenet512)")
+        # logger.info("Face Embedding module initialized with DeepFace (facenet512)")
 
     def get_face_embedding(self, face_img: np.ndarray, enforce_detection=False) -> Optional[np.ndarray]:
         try:
@@ -108,11 +108,11 @@ class FaceEmbedding:
                     face_img = np.clip(face_img, 0, 255).astype(np.uint8)
                 # Thêm chuyển đổi BGR -> RGB nếu ảnh có 3 kênh
                 face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-            logger.debug(f"[Preprocess][Before] min={face_img.min()}, max={face_img.max()}, mean={face_img.mean()}")
+            # logger.debug(f"[Preprocess][Before] min={face_img.min()}, max={face_img.max()}, mean={face_img.mean()}")
             face_img = cv2.resize(face_img, self.config.face_size, interpolation=cv2.INTER_AREA)
             face_img = face_img.astype(np.float32)
             face_img = (face_img / 127.5) - 1.0  # Chuẩn hóa về [-1,1] cho Facenet
-            logger.debug(f"[Preprocess][After] min={face_img.min()}, max={face_img.max()}, mean={face_img.mean()}")
+            # logger.debug(f"[Preprocess][After] min={face_img.min()}, max={face_img.max()}, mean={face_img.mean()}")
             return face_img
         except Exception as e:
             return None
@@ -144,9 +144,9 @@ class FaceEmbedding:
         # Ghi log embedding vector ra file nếu có label đặc biệt
         log_to_file = False
         log_file = None
-        if debug_label is not None and ("register" in debug_label or "recognize" in debug_label):
-            log_to_file = True
-            log_file = f"embedding_{debug_label}_{int(time.time())}.txt"
+        # if debug_label is not None and ("register" in debug_label or "recognize" in debug_label):
+            # log_to_file = True
+            # log_file = f"embedding_{debug_label}_{int(time.time())}.txt"
         
         if face_img is None or face_img.size == 0:
             logger.warning("Empty face image provided")
@@ -155,7 +155,7 @@ class FaceEmbedding:
             logger.warning("Invalid face image shape")
             return None
         if face_img.dtype != np.float32:
-            logger.info("Auto converting face image dtype from %s to float32", face_img.dtype)
+            # logger.info("Auto converting face image dtype from %s to float32", face_img.dtype)
             face_img = face_img.astype(np.float32)
         img_hash = hash(face_img.tobytes())
         with self.cache_lock:
@@ -169,16 +169,16 @@ class FaceEmbedding:
                 # CHUẨN HÓA L2
                 norm = np.linalg.norm(vec)
                 if not (0.99 < norm < 1.01):
-                    logger.warning(f"[Embedding][{debug_label}] L2 norm is not close to 1: {norm}, will normalize!")
+                    # logger.warning(f"[Embedding][{debug_label}] L2 norm is not close to 1: {norm}, will normalize!")
                     vec = vec / (norm + 1e-10)
                     norm = np.linalg.norm(vec)
-                logger.debug(f"[Embedding][{debug_label}] shape={vec.shape}, dtype={vec.dtype}, norm={norm:.4f}, nan={np.isnan(vec).any()}, inf={np.isinf(vec).any()}")
-                logger.debug(f"[Embedding][{debug_label}] first 10 values: {vec[:10]}")
-                if log_to_file and log_file:
-                    with open(log_file, 'w', encoding='utf-8') as f:
-                        f.write(f"Embedding ({debug_label}):\n")
-                        f.write(str(vec.tolist()) + "\n")
-                        f.write(f"Norm: {norm}\n")
+                # logger.debug(f"[Embedding][{debug_label}] shape={vec.shape}, dtype={vec.dtype}, norm={norm:.4f}, nan={np.isnan(vec).any()}, inf={np.isinf(vec).any()}")
+                # logger.debug(f"[Embedding][{debug_label}] first 10 values: {vec[:10]}")
+                # if log_to_file and log_file:
+                #     with open(log_file, 'w', encoding='utf-8') as f:
+                #         f.write(f"Embedding ({debug_label}):\n")
+                #         f.write(str(vec.tolist()) + "\n")
+                #         f.write(f"Norm: {norm}\n")
                 if np.isnan(vec).any() or np.isinf(vec).any():
                     logger.warning(f"[Embedding][{debug_label}] NAN or INF detected in embedding vector!")
                 if not (0.99 < norm < 1.01):
@@ -377,7 +377,7 @@ class FaceEmbedding:
             emb = self.l2_normalize(emb).astype(np.float32)
             data["embedding"] = emb
             norm = np.linalg.norm(emb)
-            logger.debug(f"[DB Embedding][{sid}] shape={emb.shape}, dtype={emb.dtype}, norm={norm:.4f}, nan={np.isnan(emb).any()}, inf={np.isinf(emb).any()}")
+            # logger.debug(f"[DB Embedding][{sid}] shape={emb.shape}, dtype={emb.dtype}, norm={norm:.4f}, nan={np.isnan(emb).any()}, inf={np.isinf(emb).any()}")
             if np.isnan(emb).any() or np.isinf(emb).any():
                 logger.warning(f"[DB Embedding][{sid}] NAN or INF detected in embedding vector!")
             if not (0.99 < norm < 1.01):
@@ -400,7 +400,7 @@ class FaceEmbedding:
             self.emb_ids = []
         with self.cache_lock:
             self.embedding_cache.clear()
-        logger.info(f"Loaded {valid_count} valid embeddings out of {len(embeddings)} total (invalid: {invalid_count})")
+        # logger.info(f"Loaded {valid_count} valid embeddings out of {len(embeddings)} total (invalid: {invalid_count})")
 
     def detect_faces(self, img: np.ndarray) -> List[Dict[str, Any]]:
         if img is None or img.size == 0:
@@ -567,7 +567,7 @@ class FaceEmbedding:
     def clear_cache(self):
         with self.cache_lock:
             self.embedding_cache.clear()
-        logger.info("Embedding cache cleared")
+        # logger.info("Embedding cache cleared")
 
     def close(self):
         try:
@@ -577,7 +577,7 @@ class FaceEmbedding:
             with self.cache_lock:
                 self.embedding_cache.clear()
             self.student_embeddings.clear()
-            logger.info("Face Embedding module closed and resources released")
+            # logger.info("Face Embedding module closed and resources released")
         except Exception as e:
             logger.error(f"Error closing Face Embedding module: {e}")
 

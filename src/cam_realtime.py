@@ -1,17 +1,23 @@
 import sys, os, cv2
+import logging
 from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QHBoxLayout, QMessageBox, QStatusBar
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
 from camera_handler import CameraHandler
 from face_detector import FaceDetector
 
+# Thiết lập logger với mức độ cao hơn để loại bỏ thông báo không cần thiết
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.ERROR)
+
 class RealtimeWindow(QMainWindow):
-    def __init__(self, cam_id=0, model_path=None):
+    def __init__(self, cam_id=0, model_path=None, fps=30):
         super().__init__()
         self.setWindowTitle("Real-time Face Detection")
         self.setMinimumSize(800, 600)  # Thiết lập kích thước tối thiểu
         self.detector = FaceDetector(model_path or os.path.join(os.path.dirname(__file__), "models", "model_3.onnx"))
-        self.camera = CameraHandler(cam_id)
+        # Sử dụng tham số fps từ config
+        self.camera = CameraHandler(camera_id=cam_id, fps=fps)
         self.camera.frame_ready.connect(self.update_frame)
         self.init_ui()
         
@@ -103,7 +109,15 @@ class RealtimeWindow(QMainWindow):
         event.accept()
 
 if __name__ == "__main__":
+    # Import config để sử dụng các tham số
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    from config.config import DEFAULT_CONFIG
+    
     app = QApplication(sys.argv)
-    window = RealtimeWindow()
+    # Sử dụng các tham số từ config
+    window = RealtimeWindow(
+        cam_id=DEFAULT_CONFIG.get("camera_id", 0),
+        fps=DEFAULT_CONFIG.get("camera_fps", 30)
+    )
     window.show()
     sys.exit(app.exec_())

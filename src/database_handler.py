@@ -7,6 +7,8 @@ from datetime import datetime
 import re
 
 logger = logging.getLogger(__name__)
+# Thiết lập mức độ logging cao hơn để loại bỏ thông báo không cần thiết
+logger.setLevel(logging.WARNING)
 
 class DatabaseHandler:
     # Constants
@@ -89,8 +91,30 @@ class DatabaseHandler:
     def ensure_created_at_for_existing_users(self):
         """Cập nhật thời gian đăng ký cho các user cũ chưa có created_at."""
         try:
+            # Kiểm tra xem cột created_at có tồn tại trong bảng users không
+            columns = self._get_table_columns("users")
+            if "created_at" not in columns:
+                # Thêm cột created_at nếu chưa tồn tại
+                # Sử dụng cách an toàn hơn để thêm cột với giá trị mặc định
+                query = QSqlQuery(self.db)
+                try:
+                    # Thử thêm cột với DEFAULT
+                    if not query.exec_("ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT (datetime('now', 'localtime'))"):
+                        # Nếu lỗi, thử thêm cột không có DEFAULT
+                        if not query.exec_("ALTER TABLE users ADD COLUMN created_at TEXT"):
+                            logger.error(f"Error adding created_at column: {query.lastError().text()}")
+                            return
+                        # Sau đó cập nhật giá trị
+                        if not query.exec_("UPDATE users SET created_at = datetime('now', 'localtime')"):
+                            logger.error(f"Error setting initial created_at values: {query.lastError().text()}")
+                            return
+                    logger.info("Added created_at column to users table")
+                except Exception as e:
+                    logger.error(f"Error adding created_at column: {e}")
+                    return
+            
+            # Cập nhật các user có created_at NULL hoặc rỗng
             query = QSqlQuery(self.db)
-            # Chỉ cập nhật các user có created_at NULL hoặc rỗng
             update_sql = "UPDATE users SET created_at = datetime('now', 'localtime') WHERE created_at IS NULL OR created_at = ''"
             if not query.exec_(update_sql):
                 logger.error(f"Error updating missing created_at: {query.lastError().text()}")
@@ -341,8 +365,32 @@ class DatabaseHandler:
         users = []
         try:
             query = QSqlQuery(self.db)
-            if query.exec_("SELECT name, student_id, class, email, created_at FROM users WHERE embedding IS NOT NULL"):
-                while query.next():
+            # Đã loại bỏ log không cần thiết
+            
+            # Kiểm tra kết nối cơ sở dữ liệu
+            if not self.db.isOpen():
+                logger.error("Cơ sở dữ liệu không được mở khi gọi get_all_users")
+                self.open_connection()
+            
+            # Kiểm tra xem cột created_at có tồn tại không
+            columns = self._get_table_columns("users")
+            has_created_at = "created_at" in columns
+            
+            # Xây dựng câu truy vấn dựa trên các cột có sẵn
+            if has_created_at:
+                sql = "SELECT name, student_id, class, email, created_at FROM users"
+            else:
+                sql = "SELECT name, student_id, class, email FROM users"
+                
+            # Thực hiện truy vấn với kiểm tra lỗi
+            if not query.exec_(sql):
+                logger.error(f"Lỗi SQL: {query.lastError().text()}")
+                return []
+                
+            # Đếm số lượng bản ghi
+            count = 0
+            while query.next():
+                if has_created_at:
                     users.append((
                         query.value(0),  # name
                         query.value(1),  # student_id
@@ -350,6 +398,18 @@ class DatabaseHandler:
                         query.value(3),  # email
                         query.value(4)   # created_at
                     ))
+                else:
+                    # Nếu không có cột created_at, thêm giá trị mặc định
+                    users.append((
+                        query.value(0),  # name
+                        query.value(1),  # student_id
+                        query.value(2),  # class
+                        query.value(3),  # email
+                        ""            # created_at (empty string)
+                    ))
+                count += 1
+                
+            # Đã loại bỏ log không cần thiết
             return users
         except Exception as e:
             logger.error(f"Exception in get_all_users: {e}")
@@ -402,7 +462,7 @@ class DatabaseHandler:
             
             # Tự động xóa user không có embedding để đồng bộ dữ liệu
             self.delete_users_without_embedding()
-            logger.info(f"get_all_embeddings: total rows with embedding: {count_total}, loaded successfully: {count_loaded}")
+            # Đã loại bỏ log không cần thiết
             return embeddings
         except Exception as e:
             logger.error(f"Exception in get_all_embeddings: {e}")
@@ -479,7 +539,7 @@ class DatabaseHandler:
                     self._mark_embedding_corrupt(sid)
                     error += 1
                     
-            logger.info(f"Embedding integrity check: total={total}, ok={ok}, error={error}")
+            # Đã loại bỏ log không cần thiết
             return ok, error
         except Exception as e:
             logger.error(f"Exception in check_all_embedding_integrity: {e}")
