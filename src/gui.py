@@ -33,16 +33,6 @@ logger = logging.getLogger("GUI")
 logging.getLogger("FaceEmbedding").setLevel(logging.WARNING)
 logging.getLogger("AttendanceSystem").setLevel(logging.WARNING)
 
-# Thiết lập logger GUI
-import sys
-logger_gui = logging.getLogger("GUI")
-logger_gui.setLevel(logging.WARNING)
-if not logger_gui.handlers:
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
-    handler.setFormatter(formatter)
-    logger_gui.addHandler(handler)
-
 # Tách thread xử lý AI
 class AIProcessingThread(QThread):
     processing_done = pyqtSignal(np.ndarray, list)
@@ -203,11 +193,8 @@ class MainWindow(QMainWindow):
                 self.ai_thread.set_frame(frame)
 
     def _on_camera_frame(self, frame):
-        # # print(f'[DEBUG] _on_camera_frame called. Frame shape: {getattr(frame, "shape", None)}') # Removed debug print
-        # logger_gui.debug(f'_on_camera_frame called. Frame shape: {getattr(frame, "shape", None)}, AI processing: {self.ai_thread.processing}') # Changed to logger.debug
         self.is_processing = True
         self.show_spinner(True)
-        pass
 
     def init_shortcuts(self):
     # Phím tắt thao tác nhanh cho các nút còn tồn tại
@@ -924,40 +911,27 @@ class MainWindow(QMainWindow):
 
 
     def setup_connections(self):
-        # # print('[DEBUG] Connecting start_camera_btn to toggle_camera')
         self.start_camera_btn.clicked.connect(self.toggle_camera)
-        # # print('[DEBUG] Connecting take_attendance_btn to manual_attendance')
         self.take_attendance_btn.clicked.connect(self.manual_attendance)
         if hasattr(self, 'refresh_attendance_btn'):
-            # # print('[DEBUG] Connecting refresh_attendance_btn to update_attendance_info')
             self.refresh_attendance_btn.clicked.connect(self.update_attendance_info)
-        # # print('[DEBUG] Connecting camera_handler.frame_ready to _on_camera_frame')
         self.camera_handler.frame_ready.connect(self._on_camera_frame)
-        # # print('[DEBUG] Connecting ai_thread.processing_done to update_frame')
         self.ai_thread.processing_done.connect(self.update_frame)
         if hasattr(self, 'export_report_excel_btn'):
-            # # print('[DEBUG] Connecting export_report_excel_btn to export_report_to_excel')
             self.export_report_excel_btn.clicked.connect(self.export_report_to_excel)
         if hasattr(self, 'export_report_pdf_btn'):
-            # # print('[DEBUG] Connecting export_report_pdf_btn to export_report_to_pdf')
             self.export_report_pdf_btn.clicked.connect(self.export_report_to_pdf)
         if hasattr(self, 'save_settings_btn'):
-            # # print('[DEBUG] Connecting save_settings_btn to save_settings')
             self.save_settings_btn.clicked.connect(self.save_settings)
         if hasattr(self, 'backup_db_btn'):
-            # # print('[DEBUG] Connecting backup_db_btn to backup_database')
             self.backup_db_btn.clicked.connect(self.backup_database)
         if hasattr(self, 'restore_db_btn'):
-            # # print('[DEBUG] Connecting restore_db_btn to restore_database')
             self.restore_db_btn.clicked.connect(self.restore_database)
         if hasattr(self, 'clear_attendance_btn'):
-            # # print('[DEBUG] Connecting clear_attendance_btn to clear_attendance_data')
             self.clear_attendance_btn.clicked.connect(self.clear_attendance_data)
         if hasattr(self, 'edit_user_btn'):
-            # # print('[DEBUG] Connecting edit_user_btn to edit_user')
             self.edit_user_btn.clicked.connect(self.edit_user)
         if hasattr(self, 'delete_user_btn'):
-            # # print('[DEBUG] Connecting delete_user_btn to delete_user')
             self.delete_user_btn.clicked.connect(self.delete_user)
 
     def toggle_camera(self):
@@ -981,17 +955,14 @@ class MainWindow(QMainWindow):
                 self.camera_view.clear()
                 self.show_spinner(False)
         except Exception as e:
-            # logger.error(f"Error in toggle_camera: {e}")
             self.show_popup(f"Không thể điều khiển camera: {e}", "error")
 
 
     def update_frame(self, frame: np.ndarray, faces: list):
         try:
-            # # print(f'[DEBUG] update_frame called. Frame shape: {getattr(frame, "shape", None)}, faces: {faces}')
             self.is_processing = False
             pix = self.convert_cv_qt(frame)
             if pix.isNull():
-                # # print('[DEBUG] convert_cv_qt returned null QPixmap!')
                 return
             self.camera_view.setPixmap(pix)
             # Hiển thị thông tin nhận diện realtime

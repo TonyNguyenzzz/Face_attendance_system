@@ -1,4 +1,4 @@
-from PyQt5.QtCore import QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import QThread, pyqtSignal
 import logging
 import time
 from typing import List, Optional, Any, Dict, Tuple
@@ -27,12 +27,7 @@ class TrainWorker(QThread):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.ERROR)
         
-
         self._is_cancelled = False
-        self._timer = QTimer()
-        self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self._process_next_batch)
-
         self.logger = logging.getLogger(__name__)
         self._current_index = 0
         self._total_frames = len(frames) if frames else 0
@@ -46,14 +41,10 @@ class TrainWorker(QThread):
         self.clean_up()
 
     def clean_up(self):
-        if hasattr(self, '_timer') and self._timer:
-            self._timer.stop()
         self._is_cancelled = True
 
     def cancel(self):
         self._is_cancelled = True
-        if hasattr(self, '_timer') and self._timer:
-            self._timer.stop()
         self.logger.info("Train worker cancelled")
 
     def validate_frame(self, frame) -> bool:
@@ -118,7 +109,9 @@ class TrainWorker(QThread):
         )
 
         if not self._is_cancelled and self._current_index < self._total_frames:
-            self._timer.start(int(self.delay * 1000))
+            # Thay vì sử dụng QTimer, chỉ đơn giản là sleep trong thread này
+            time.sleep(self.delay)
+            self._process_next_batch()
         else:
             self._finish_processing()
 
