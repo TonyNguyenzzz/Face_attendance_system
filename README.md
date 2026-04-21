@@ -114,8 +114,7 @@ workspace/
 │   └── onnx_config.py         # Cấu hình ONNX runtime
 ├── models/                    # Thư mục chứa model ONNX
 ├── attendance.db              # Database SQLite
-├── requirements.txt           # Dependencies
-└── pipeline.txt               # Tài liệu pipeline
+└── requirements.txt           # Dependencies
 ```
 
 ## 🚀 Cài đặt
