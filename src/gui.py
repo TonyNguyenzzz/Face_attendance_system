@@ -1,50 +1,91 @@
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
-from datetime import datetime
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
-from datetime import datetime
-import cv2
-import numpy as np
+"""
+Face Recognition Attendance System - GUI Module
+
+This module provides the main graphical user interface for the attendance system,
+including camera management, user registration, reporting, and settings.
+
+Author: Nguyen Gia Huy
+Version: 1.0
+"""
+
+import sys
+import os
 import logging
 import time
-from train_worker import TrainWorker
+import copy
+from datetime import datetime
+from typing import Optional, List, Tuple, Dict, Any
+
+import cv2
+import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QLineEdit, QFormLayout,
     QTableWidget, QTableWidgetItem, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox,
     QFileDialog, QMessageBox, QFrame, QSplitter, QGroupBox, QCheckBox,
-    QProgressBar, QProgressDialog, QScrollArea, QGridLayout, QSizePolicy, QStatusBar, QHeaderView, QSlider
+    QProgressBar, QProgressDialog, QScrollArea, QGridLayout, QSizePolicy, 
+    QStatusBar, QHeaderView, QSlider
 )
 from PyQt5.QtGui import QBrush, QColor, QPixmap, QImage, QFont, QIcon
 from PyQt5.QtCore import Qt, QTimer, QDate, QThread, pyqtSignal, QSize, QMutexLocker
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+
 from camera_handler import CameraHandler
 from database_handler import DatabaseHandler
 from face_embedding import FaceEmbedding
 from face_recognition import AttendanceSystem
+from train_worker import TrainWorker
 from config.config import DEFAULT_CONFIG
 
+# Configure environment before other imports
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
+# Setup logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("GUI")
 logging.getLogger("FaceEmbedding").setLevel(logging.WARNING)
 logging.getLogger("AttendanceSystem").setLevel(logging.WARNING)
 
-# Tách thread xử lý AI
-class AIProcessingThread(QThread):
-    processing_done = pyqtSignal(np.ndarray, list)
 
-    def __init__(self, attendance_system):
+class AIProcessingThread(QThread):
+    """
+    Thread for processing AI face recognition tasks asynchronously.
+    
+    This thread handles face detection and recognition to prevent blocking
+    the main GUI thread during intensive AI computations.
+    
+    Attributes:
+        processing_done: Signal emitted when processing completes with frame and faces
+        attendance_system: The attendance system instance for processing
+        current_frame: Current frame being processed
+        running: Flag to control thread execution
+        processing: Flag indicating if currently processing a frame
+    """
+    
+    processing_done = pyqtSignal(np.ndarray, list)
+    
+    def __init__(self, attendance_system: AttendanceSystem) -> None:
+        """
+        Initialize the AI processing thread.
+        
+        Args:
+            attendance_system: AttendanceSystem instance for face processing
+        """
         super().__init__()
         self.attendance_system = attendance_system
-        self.current_frame = None
-        self.running = True
-        self.processing = False
-
-    def set_frame(self, frame: np.ndarray):
+        self.current_frame: Optional[np.ndarray] = None
+        self.running: bool = True
+        self.processing: bool = False
+    
+    def set_frame(self, frame: np.ndarray) -> None:
+        """
+        Set a new frame for processing if not currently busy.
+        
+        Args:
+            frame: Image frame to process
+        """
         if not self.processing:
             if frame is not None:
                 try:
@@ -53,26 +94,26 @@ class AIProcessingThread(QThread):
                 except Exception as e:
                     logger.error(f"Error copying frame in AIProcessingThread: {e}", exc_info=True)
                     self.current_frame = None
-                    self.processing = False # Ensure processing is reset
+                    self.processing = False
             else:
                 logger.warning("AIProcessingThread received a None frame. Skipping.")
-
-    def run(self):
+    
+    def run(self) -> None:
+        """Main thread loop for processing frames."""
         while self.running:
             if self.current_frame is None:
                 self.msleep(10)
                 continue
+            
             try:
                 processed_frame, faces = self.attendance_system.process_image(self.current_frame)
                 self.processing_done.emit(processed_frame, faces)
             except Exception as e:
                 logger.error(f"AI processing error in thread: {e}", exc_info=True)
-                # Consider emitting an error signal to the GUI if this happens frequently
             finally:
-                self.current_frame = None # Always clear frame after processing or error
+                self.current_frame = None
                 self.processing = False
-                self.msleep(10) # Adjust sleep as needed, maybe longer after error
-                pass
+                self.msleep(10)
 
 STYLESHEET = """
 QMainWindow {
@@ -142,62 +183,99 @@ QProgressBar::chunk {
 """
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    """
+    Main application window for the Face Recognition Attendance System.
+    
+    This class manages all UI components including tabs for home, registration,
+    reporting, and settings. It handles camera operations, face recognition,
+    database interactions, and user interface updates.
+    
+    Attributes:
+        db: DatabaseHandler instance for data persistence
+        config: Configuration dictionary
+        attendance_system: AttendanceSystem instance for face processing
+        camera_handler: CameraHandler instance for camera management
+        ai_thread: AIProcessingThread for async AI processing
+        stats_values: Dictionary storing statistics display labels
+        trained_embedding: Trained face embedding model
+    """
+    
+    def __init__(self) -> None:
+        """Initialize the main window and all its components."""
         super().__init__()
         self.setWindowTitle("Hệ Thống Điểm Danh Bằng Nhận Diện Khuôn Mặt")
         self.setMinimumSize(1200, 800)
-        # Tạo DatabaseHandler với tham số connection_name rõ ràng
+        
+        # Initialize database handler with explicit connection name
         self.db = DatabaseHandler(connection_name="gui_connection")
-        # Đảm bảo tất cả user đều có trường created_at
         self.db.ensure_created_at_for_existing_users()
-        # Sử dụng config đồng bộ từ DEFAULT_CONFIG
-        import copy
+        
+        # Load configuration
         self.config = copy.deepcopy(DEFAULT_CONFIG)
-        # Truyền db_handler để đồng nhất kết nối
-        # Đảm bảo truyền đúng db_handler đã khởi tạo
+        
+        # Initialize core systems
         self.attendance_system = AttendanceSystem(self.config, db_handler=self.db)
-        # Đảm bảo truyền đúng camera_id từ config nếu có
         self.camera_handler = CameraHandler(self.config.get("camera_id", 0))
         self.ai_thread = AIProcessingThread(self.attendance_system)
-        self.stats_values = {}
-        self.trained_embedding = None
-        self.current_capture_frame = None
-        self.last_recognition = None
-        self.last_face_pixmap = None
-        self.is_processing = False
+        
+        # State variables
+        self.stats_values: Dict[str, QLabel] = {}
+        self.trained_embedding: Optional[np.ndarray] = None
+        self.current_capture_frame: Optional[np.ndarray] = None
+        self.last_recognition: Optional[Any] = None
+        self.last_face_pixmap: Optional[QPixmap] = None
+        self.is_processing: bool = False
+        
+        # Setup UI components
         self.setup_ui()
+        
+        # Setup status bar
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
         self.statusBar.showMessage("Sẵn sàng", 5000)
+        
+        # Initialize timers
+        self._setup_timers()
+        
+        # Setup connections and shortcuts
+        self.setup_connections()
+        self.init_shortcuts()
+        
+        # Connect tab change signal
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+    
+    def _setup_timers(self) -> None:
+        """Initialize and start all application timers."""
+        # Timer for updating attendance info (every 5 seconds)
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.update_attendance_info)
         self.update_timer.start(5000)
+        
+        # Timer for updating preview pixmap (10 FPS)
         self.preview_timer = QTimer(self)
         self.preview_timer.timeout.connect(self.update_preview_pixmap)
-        self.preview_timer.start(100)  # Cập nhật GUI mỗi 100ms (~10 FPS)
-        # Thêm timer truyền frame đều đặn vào AI thread
+        self.preview_timer.start(100)
+        
+        # Timer for feeding frames to AI thread (10 FPS)
         self.frame_feed_timer = QTimer(self)
         self.frame_feed_timer.timeout.connect(self.feed_ai_thread_with_camera_frame)
-        self.frame_feed_timer.start(100)  # 10 FPS
-        self.setup_connections()
-        self.init_shortcuts()
-        # Luôn cập nhật bảng người dùng khi chuyển tab
-        self.tabs.currentChanged.connect(self.on_tab_changed)
-
-    def feed_ai_thread_with_camera_frame(self):
+        self.frame_feed_timer.start(100)
+    
+    def feed_ai_thread_with_camera_frame(self) -> None:
+        """Feed current camera frame to AI processing thread if available."""
         if self.camera_handler.isRunning() and not self.ai_thread.processing:
-            # from PyQt5.QtCore import QMutexLocker # Removed local import
             with QMutexLocker(self.camera_handler.lock):
                 frame = self.camera_handler.frame
             if frame is not None:
                 self.ai_thread.set_frame(frame)
-
-    def _on_camera_frame(self, frame):
+    
+    def _on_camera_frame(self, frame: np.ndarray) -> None:
+        """Handle new camera frame event."""
         self.is_processing = True
         self.show_spinner(True)
-
-    def init_shortcuts(self):
-    # Phím tắt thao tác nhanh cho các nút còn tồn tại
+    
+    def init_shortcuts(self) -> None:
+        """Initialize keyboard shortcuts for quick actions."""
         self.start_camera_btn.setShortcut("Ctrl+Shift+C")
         self.take_attendance_btn.setShortcut("Ctrl+Shift+A")
         if hasattr(self, 'register_btn'):
@@ -206,17 +284,31 @@ class MainWindow(QMainWindow):
             self.export_report_excel_btn.setShortcut("Ctrl+Shift+E")
         if hasattr(self, 'export_report_pdf_btn'):
             self.export_report_pdf_btn.setShortcut("Ctrl+Shift+P")
-
-    def show_spinner(self, show: bool):
+    
+    def show_spinner(self, show: bool) -> None:
+        """
+        Show or hide the loading spinner.
+        
+        Args:
+            show: True to show spinner, False to hide
+        """
         if hasattr(self, 'loading_spinner'):
             if show:
-                self.loading_spinner.setText("<img src='https://i.imgur.com/llF5iyg.gif' width='48' height='48'> Đang xử lý AI...")
+                self.loading_spinner.setText(
+                    "<img src='https://i.imgur.com/llF5iyg.gif' width='48' height='48'> Đang xử lý AI..."
+                )
                 self.loading_spinner.show()
             else:
                 self.loading_spinner.hide()
-
-    # Đã loại bỏ hoàn toàn popup, chỉ hiển thị trạng thái trên statusBar hoặc label
-    def show_popup(self, message, status="info"):
+    
+    def show_popup(self, message: str, status: str = "info") -> None:
+        """
+        Display a status message in the status bar.
+        
+        Args:
+            message: Message to display
+            status: Status type (info, warning, error) - currently unused
+        """
         if hasattr(self, 'statusBar'):
             self.statusBar.showMessage(message, 5000)
 
@@ -381,7 +473,15 @@ class MainWindow(QMainWindow):
         self.stat_refresh_btn.clicked.connect(self.update_attendance_info)
         self.stat_export_btn.clicked.connect(self.export_report_to_excel)
 
-    def update_statusbar_stats(self, total, present, absent):
+    def update_statusbar_stats(self, total: int, present: int, absent: int) -> None:
+        """
+        Update the status bar statistics display.
+        
+        Args:
+            total: Total number of users
+            present: Number of users present today
+            absent: Number of users absent today
+        """
         self.stat_total_label.setText(f"Tổng: {total}")
         self.stat_present_label.setText(f"Đã điểm danh: {present}")
         self.stat_absent_label.setText(f"Vắng mặt: {absent}")
@@ -1432,46 +1532,59 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.critical(self, "Lỗi", "Không thể xoá danh sách điểm danh hôm nay.")
 
-    def update_attendance_info(self):
+    def update_attendance_info(self) -> None:
+        """
+        Update attendance information display including statistics and recent records.
+        
+        Fetches today's attendance records from database and updates all relevant
+        UI components including tables, labels, and status bar.
+        """
         try:
             today = datetime.now().strftime("%Y-%m-%d")
             records = self.db.get_attendance_records(date=today)
-            # Hiển thị mỗi sinh viên 1 lần (bản ghi mới nhất trong ngày, status='present')
-            unique_present = {}
+            
+            # Track unique present students (latest record per student)
+            unique_present: Dict[str, tuple] = {}
             for rec in records:
                 name, student_id, class_name, date, time, status = rec
                 if status == "present":
                     unique_present[student_id] = (name, student_id, class_name, date, time, status)
+            
+            # Update recent attendance table
             self.recent_attendance_table.setRowCount(len(unique_present))
-            for i, (student_id, (name, student_id, class_name, date, time, status)) in enumerate(unique_present.items()):
+            for i, (student_id, (name, _, class_name, date, time, status)) in enumerate(unique_present.items()):
                 self.recent_attendance_table.setItem(i, 0, QTableWidgetItem(name))
                 self.recent_attendance_table.setItem(i, 1, QTableWidgetItem(student_id))
                 self.recent_attendance_table.setItem(i, 2, QTableWidgetItem(time))
                 status_item = QTableWidgetItem(status)
                 status_item.setForeground(QBrush(QColor("#2ecc71" if status == "present" else "#e74c3c")))
                 self.recent_attendance_table.setItem(i, 3, status_item)
-            # Tổng số sinh viên chỉ tính những người đã đăng ký khuôn mặt (có embedding)
+            
+            # Calculate statistics
             total_students = self.db.get_total_students()
             present_today = len(unique_present)
             absent_today = max(0, total_students - present_today)
             attendance_rate = (present_today / total_students * 100) if total_students > 0 else 0
+            
+            # Update dashboard stats
             self.stats_values["Tổng số sinh viên:"].setText(str(total_students))
             self.stats_values["Đã điểm danh:"].setText(str(present_today))
             self.stats_values["Vắng mặt:"].setText(str(absent_today))
-            # Cập nhật tile lớn dashboard
+            
+            # Update status bar labels
             if hasattr(self, 'stat_total_label'):
                 self.stat_total_label.setText(f"Tổng: {total_students}")
             if hasattr(self, 'stat_present_label'):
                 self.stat_present_label.setText(f"Đã điểm danh: {present_today}")
             if hasattr(self, 'stat_absent_label'):
                 self.stat_absent_label.setText(f"Vắng mặt: {absent_today}")
-            # Cập nhật số liệu cho thanh trạng thái
+            
+            # Update status bar via helper method
             if hasattr(self, 'update_statusbar_stats'):
                 self.update_statusbar_stats(total_students, present_today, absent_today)
+                
         except Exception as e:
-            import logging
-            logger_gui = logging.getLogger("GUI")
-            # logger_gui.error(f"[DEBUG] Error in update_attendance_info: {e}")
+            logger.error(f"Error updating attendance info: {e}", exc_info=True)
 
     def update_users_table(self):
         try:
@@ -1785,42 +1898,81 @@ QStatusBar { background: #23272f; color: #00bcd4; }
             # logger.error(f"Error in delete_user: {e}")
             QMessageBox.critical(self, "Lỗi", f"Không thể xóa người dùng: {e}")
 
-    def on_tab_changed(self, index):
-        # Luôn đồng bộ danh sách lớp khi chuyển tab
+    def on_tab_changed(self, index: int) -> None:
+        """
+        Handle tab change events.
+        
+        Args:
+            index: Index of the newly selected tab
+        """
+        # Sync class list when changing tabs
         self.update_class_comboboxes()
-        # Tab đăng ký người dùng là tab số 2
+        
+        # Update user table when switching to registration tab (index 2)
         if index == 2:
             self.filter_users_table()
-        # Tự động cập nhật báo cáo khi chuyển sang tab "Báo cáo"
+        
+        # Auto-update report when switching to report tab
         if self.tabs.tabText(index) == "Báo cáo":
             self.apply_filter()
-
-    def closeEvent(self, event):
+    
+    def closeEvent(self, event) -> None:
+        """
+        Handle application close event with proper cleanup.
+        
+        Ensures all resources (camera, threads, database) are properly closed
+        before the application exits.
+        
+        Args:
+            event: Close event
+        """
         try:
+            # Close attendance system
             self.attendance_system.close()
+            
+            # Close database connection
             self.db.close()
+            
+            # Stop camera handler
             if hasattr(self, 'camera_handler') and self.camera_handler.isRunning():
                 self.camera_handler.stop()
+            
+            # Stop AI processing thread
             if self.ai_thread.isRunning():
                 self.ai_thread.running = False
                 self.ai_thread.quit()
                 self.ai_thread.wait()
+            
+            # Stop capture camera if exists
             if hasattr(self, 'capture_camera') and self.capture_camera.isRunning():
                 self.capture_camera.stop()
+            
+            # Stop capture thread if exists
             if hasattr(self, 'capture_thread') and self.capture_thread.isRunning():
                 self.capture_thread.quit()
                 self.capture_thread.wait()
+            
+            # Hide spinner
             self.show_spinner(False)
+            
             event.accept()
+            
         except Exception as e:
-            # logger.error(f"Error in closeEvent: {e}")
+            logger.error(f"Error during application close: {e}", exc_info=True)
             event.accept()
 
-def main():
+def main() -> None:
+    """
+    Main entry point for the Face Recognition Attendance System GUI.
+    
+    Initializes the Qt application, creates the main window, and starts
+    the event loop.
+    """
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     main()
