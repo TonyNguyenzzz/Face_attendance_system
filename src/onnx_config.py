@@ -1,30 +1,48 @@
+"""
+ONNX Runtime configuration module for Face Recognition Attendance System.
+Provides centralized ONNX provider configuration for CPU/GPU acceleration.
+"""
 import onnxruntime as ort
 import logging
 
 logger = logging.getLogger(__name__)
-# Thiết lập mức độ logging cao hơn để loại bỏ thông báo không cần thiết
-logger.setLevel(logging.WARNING)
 
-def configure_onnx_providers():
+
+def configure_onnx_providers(use_gpu: bool = True) -> list:
     """
-    Cấu hình ONNX Runtime để sử dụng CPU khi CUDA không khả dụng.
-    Trả về danh sách providers phù hợp.
+    Configure ONNX Runtime providers based on hardware availability.
+    
+    Args:
+        use_gpu: Whether to attempt GPU acceleration (default: True)
+        
+    Returns:
+        List of provider names in priority order
     """
     available_providers = ort.get_available_providers()
-    logger.debug(f"ONNX Runtime providers khả dụng: {available_providers}")
+    logger.debug(f"Available ONNX Runtime providers: {available_providers}")
     
-    # Thử sử dụng CUDA nếu có, nếu không thì dùng CPU
+    if not use_gpu:
+        logger.info("GPU acceleration disabled, using CPU only")
+        return ['CPUExecutionProvider']
+    
+    # Try CUDA first if available
     if 'CUDAExecutionProvider' in available_providers:
         try:
-            # Thử tải CUDA provider
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            # Kiểm tra xem có thể tạo session với CUDA không
-            logger.debug("Đang thử sử dụng CUDA Execution Provider...")
-            return providers
+            logger.info("Using CUDA Execution Provider for GPU acceleration")
+            return ['CUDAExecutionProvider', 'CPUExecutionProvider']
         except Exception as e:
-            logger.warning(f"Không thể sử dụng CUDA Execution Provider: {e}")
-            logger.debug("Chuyển sang sử dụng CPU Execution Provider")
-            return ['CPUExecutionProvider']
-    else:
-        logger.debug("CUDA Execution Provider không khả dụng, sử dụng CPU")
-        return ['CPUExecutionProvider']
+            logger.warning(f"CUDA Execution Provider failed: {e}, falling back to CPU")
+    
+    # Fall back to CPU
+    logger.info("Using CPU Execution Provider")
+    return ['CPUExecutionProvider']
+
+
+def get_available_providers() -> list:
+    """Get list of all available ONNX Runtime providers."""
+    return ort.get_available_providers()
+
+
+def is_cuda_available() -> bool:
+    """Check if CUDA execution provider is available."""
+    return 'CUDAExecutionProvider' in ort.get_available_providers()

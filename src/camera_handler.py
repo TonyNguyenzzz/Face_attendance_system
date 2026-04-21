@@ -1,78 +1,111 @@
-# camera_handler.py
+"""
+Camera handler module for Face Recognition Attendance System.
+Provides thread-safe camera capture with configurable FPS.
+"""
 import cv2
 import numpy as np
 import logging
 from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
+from typing import Optional
 
-# Thiết lập logger với mức độ cao hơn để loại bỏ thông báo không cần thiết
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.ERROR)
+
 
 class CameraHandler(QThread):
+    """Thread-safe camera handler for real-time video capture."""
+    
     frame_ready = pyqtSignal(np.ndarray)
     
-    def __init__(self, camera_id=0, fps=30):
+    def __init__(self, camera_id: int = 0, fps: int = 30):
         super().__init__()
         self.camera_id = camera_id
         self.fps = fps
         self.running = False
-        self.frame = None
-        self.lock = QMutex()
-
-    def start(self):
-        # Kiểm tra camera trước khi bắt đầu thread
+        self._frame: Optional[np.ndarray] = None
+        self._lock = QMutex()
+        self._cap: Optional[cv2.VideoCapture] = None
+    
+    def isRunning(self) -> bool:
+        """Check if camera thread is running."""
+        return self.running
+    
+    def start(self) -> bool:
+        """
+        Start the camera thread after verifying camera availability.
+        
+        Returns:
+            True if camera is available and thread started, False otherwise
+        """
+        # Test camera availability first
         test_cap = cv2.VideoCapture(self.camera_id)
         if not test_cap.isOpened():
+            logger.error(f"Cannot open camera {self.camera_id}")
             test_cap.release()
             return False
         test_cap.release()
         
-        # Bắt đầu thread nếu camera khả dụng
+        # Start the thread
         super().start()
         return True
-
-    def run(self):
+    
+    def run(self) -> None:
+        """Main thread loop for capturing frames."""
         self.running = True
-        cap = None
+        
         try:
-            cap = cv2.VideoCapture(self.camera_id)
+            self._cap = cv2.VideoCapture(self.camera_id)
             
-            if not cap.isOpened():
-                logger.error(f"Không thể mở camera ID {self.camera_id}")
+            if not self._cap.isOpened():
+                logger.error(f"Failed to open camera {self.camera_id}")
                 self.running = False
                 return
-                
+            
             while self.running:
                 try:
-                    ret, frame = cap.read()
+                    ret, frame = self._cap.read()
+                    
                     if not ret or frame is None:
-                        logger.warning(f"Không đọc được frame từ camera ID {self.camera_id}")
-                        # Thử kết nối lại camera sau 1 giây
-                        self.msleep(1000)
+                        logger.warning(f"Failed to read frame from camera {self.camera_id}")
+                        self.msleep(1000)  # Wait before retry
                         continue
-                        
-                    with QMutexLocker(self.lock):
-                        self.frame = frame.copy()
+                    
+                    # Store frame safely
+                    with QMutexLocker(self._lock):
+                        self._frame = frame.copy()
+                    
+                    # Emit signal
                     self.frame_ready.emit(frame)
                     
-                    # Tính toán thời gian chờ dựa trên FPS
-                    wait_time = int(1000 / self.fps)  # Chuyển đổi FPS thành milliseconds
-                    self.msleep(wait_time)  # Giới hạn FPS theo cấu hình
+                    # Control FPS
+                    wait_time = int(1000 / self.fps)
+                    self.msleep(wait_time)
+                    
                 except cv2.error as e:
-                    logger.error(f"OpenCV error: {str(e)}")
-                    self.msleep(1000)  # Chờ 1 giây trước khi thử lại
+                    logger.error(f"OpenCV error: {e}")
+                    self.msleep(1000)
                 except Exception as e:
-                    logger.error(f"Lỗi khi xử lý frame: {str(e)}")
-                    self.msleep(1000)  # Chờ 1 giây trước khi thử lại
+                    logger.error(f"Frame processing error: {e}")
+                    self.msleep(1000)
+                    
         except Exception as e:
-            logger.error(f"Lỗi camera: {str(e)}")
+            logger.error(f"Camera thread error: {e}")
         finally:
-            if cap is not None:
-                cap.release()
-            self.running = False
-            logger.info("Camera thread đã dừng")
-
-    def stop(self):
-        """Dừng luồng camera."""
+            self._cleanup()
+    
+    def _cleanup(self) -> None:
+        """Release camera resources."""
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+        self.running = False
+        logger.info("Camera thread stopped")
+    
+    def stop(self) -> None:
+        """Stop the camera thread gracefully."""
         self.running = False
         self.wait()
+    
+    def get_frame(self) -> Optional[np.ndarray]:
+        """Get the latest captured frame (thread-safe)."""
+        with QMutexLocker(self._lock):
+            return self._frame.copy() if self._frame is not None else None
